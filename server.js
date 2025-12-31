@@ -18,7 +18,6 @@ const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
 
 function setCache(key, data) {
   if (segmentCache.size > CACHE_LIMIT) {
-    // Remove oldest entry
     const firstKey = segmentCache.keys().next().value;
     segmentCache.delete(firstKey);
   }
@@ -62,6 +61,7 @@ app.get("/:channelId/manifest.mpd", async (req, res) => {
       `&virtualDomain=001.live_hls.zte.com` +
       `&videoid=${videoid}` +
       `&ztecid=${ztecid}` +
+      `&m4s_min=1` +
       `&usersessionid=${usersessionid}` +
       `&NeedJITP=1` +
       `&isjitp=0` +
@@ -71,10 +71,11 @@ app.get("/:channelId/manifest.mpd", async (req, res) => {
     const response = await fetch(upstreamURL);
     let mpdText = await response.text();
 
-    // Rewrite BaseURL to proxy segments through this server
+    // Rewrite BaseURL to proxy through our server
+    // Use absolute URL so player can request segments properly
     mpdText = mpdText.replace(
       /<BaseURL>(.*?)<\/BaseURL>/g,
-      `<BaseURL>/${channelId}/</BaseURL>`
+      `<BaseURL>https://yttest-production.up.railway.app/${channelId}/</BaseURL>`
     );
 
     res.setHeader("Content-Type", "application/dash+xml");
@@ -88,12 +89,12 @@ app.get("/:channelId/manifest.mpd", async (req, res) => {
 // =========================
 // Proxy segments (*.m4s) with caching
 // =========================
-app.get("/:channelId/:segment", async (req, res) => {
+app.get("/:channelId/*", async (req, res) => {
   try {
-    const { channelId, segment } = req.params;
+    const { channelId } = req.params;
+    const segment = req.params[0]; // supports subfolders like Quality/00001.m4s
     const cacheKey = `${channelId}_${segment}`;
 
-    // Check cache
     const cached = getCache(cacheKey);
     if (cached) {
       res.setHeader("Content-Type", "video/iso.segment");
@@ -118,10 +119,7 @@ app.get("/:channelId/:segment", async (req, res) => {
       `&isjitp=0`;
 
     const upstreamRes = await fetch(upstreamURL);
-
-    if (!upstreamRes.ok) {
-      return res.status(502).send("Upstream error");
-    }
+    if (!upstreamRes.ok) return res.status(502).send("Upstream error");
 
     const chunks = [];
     const pass = new PassThrough();
@@ -145,5 +143,5 @@ app.get("/:channelId/:segment", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Fully optimized DASH proxy running on port ${PORT}`);
+  console.log(`✅ Fully playable DASH proxy running on port ${PORT}`);
 });
