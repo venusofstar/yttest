@@ -9,13 +9,43 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.raw({ type: "*/*" }));
 
+// =========================
+// In-memory segment cache
+// =========================
+const segmentCache = new Map();
+const CACHE_LIMIT = 500; // max segments in memory
+const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+
+function setCache(key, data) {
+  if (segmentCache.size > CACHE_LIMIT) {
+    // Remove oldest entry
+    const firstKey = segmentCache.keys().next().value;
+    segmentCache.delete(firstKey);
+  }
+  segmentCache.set(key, { data, timestamp: Date.now() });
+}
+
+function getCache(key) {
+  const cached = segmentCache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.timestamp > CACHE_TTL) {
+    segmentCache.delete(key);
+    return null;
+  }
+  return cached.data;
+}
+
+// =========================
 // Helper to generate ZTE-style IDs
+// =========================
 function makeId(channelId, offset = 0) {
   const BASE = "ch0000009099000000";
   return BASE + String(Number(channelId) + offset).padStart(4, "0");
 }
 
+// =========================
 // Proxy MPD
+// =========================
 app.get("/:channelId/manifest.mpd", async (req, res) => {
   try {
     const { channelId } = req.params;
@@ -42,7 +72,7 @@ app.get("/:channelId/manifest.mpd", async (req, res) => {
     const response = await fetch(upstreamURL);
     let mpdText = await response.text();
 
-    // Optional: rewrite segment URLs to go through proxy
+    // Rewrite BaseURL to proxy segments through this server
     mpdText = mpdText.replace(
       /<BaseURL>(.*?)<\/BaseURL>/g,
       `<BaseURL>/${channelId}/</BaseURL>`
@@ -56,10 +86,20 @@ app.get("/:channelId/manifest.mpd", async (req, res) => {
   }
 });
 
-// Proxy all segments (*.m4s)
+// =========================
+// Proxy segments (*.m4s) with caching
+// =========================
 app.get("/:channelId/:segment", async (req, res) => {
   try {
     const { channelId, segment } = req.params;
+    const cacheKey = `${channelId}_${segment}`;
+
+    // Check cache
+    const cached = getCache(cacheKey);
+    if (cached) {
+      res.setHeader("Content-Type", "video/iso.segment");
+      return res.send(cached);
+    }
 
     const channelFull = makeId(channelId);
     const videoid = makeId(channelId, 100);
@@ -80,8 +120,25 @@ app.get("/:channelId/:segment", async (req, res) => {
 
     const upstreamRes = await fetch(upstreamURL);
 
+    if (!upstreamRes.ok) {
+      return res.status(502).send("Upstream error");
+    }
+
+    const chunks = [];
+    const pass = new PassThrough();
+
+    upstreamRes.body.on("data", (chunk) => {
+      chunks.push(chunk);
+      pass.write(chunk);
+    });
+
+    upstreamRes.body.on("end", () => {
+      pass.end();
+      setCache(cacheKey, Buffer.concat(chunks));
+    });
+
     res.setHeader("Content-Type", "video/iso.segment");
-    upstreamRes.body.pipe(res);
+    pass.pipe(res);
   } catch (err) {
     console.error(err);
     res.status(500).send("Error fetching segment");
@@ -89,5 +146,5 @@ app.get("/:channelId/:segment", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Fully playable DASH proxy running on port ${PORT}`);
+  console.log(`✅ Fully optimized DASH proxy running on port ${PORT}`);
 });
