@@ -12,7 +12,7 @@ app.use(cors());
 app.use(express.raw({ type: "*/*" }));
 
 // =========================
-// KEEP ALIVE AGENTS
+// KEEP-ALIVE AGENTS
 // =========================
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200 });
@@ -50,7 +50,6 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup every 10 min
 setInterval(() => sessions.clear(), 10 * 60 * 1000);
 
 // =========================
@@ -94,8 +93,17 @@ app.get("/:channelId/*", async (req, res) => {
   const path = req.params[0];
   const session = getSession(channelId);
 
+  // =========================
+  // PARAMPARAM (AuthInfo here)
+  // =========================
+  const paramparam = new URLSearchParams({
+    AuthInfo: session.authInfo
+  });
+
+  // =========================
+  // MAIN PARAMS (NO AuthInfo)
+  // =========================
   const params = new URLSearchParams({
-    AuthInfo: session.authInfo,
     version: "v1.0",
     BreakPoint: "0",
     virtualDomain: "001.live_hls.zte.com",
@@ -112,13 +120,14 @@ app.get("/:channelId/*", async (req, res) => {
   try {
     const upstream = await fetchSticky(origin => {
       const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
+      const query = `${paramparam}&${params}`;
       return path.includes("?")
-        ? `${base}${path}&${params}`
-        : `${base}${path}?${params}`;
+        ? `${base}${path}&${query}`
+        : `${base}${path}?${query}`;
     }, req, session);
 
     // =========================
-    // MPD FIX
+    // MPD
     // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
