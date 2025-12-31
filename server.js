@@ -26,7 +26,7 @@ app.get("/:channelId/manifest.mpd", (req, res) => {
   const { channelId } = req.params;
 
   // URL without AuthInfo
-  const goToURL = `http://143.44.136.67:6060/001/2/ch0000009099000000${channelId}/manifest.mpd?AuthInfo=Tajaqa%2FdPohvabxHbYUVrZLZDsxmxbufdpmz6ykZVY6w65FFCygtQMRRIUPF0xuXe9OnZTxGvJPcGpQT0Y5Pwg%3D%3D&JITPDRMType=Widevine&virtualDomain=001.live_hls.zte.com`;
+  const goToURL = `http://143.44.136.67:6060/001/2/ch0000009099000000${channelId}/manifest.mpd?AuthInfo=Tajaqa%2FdPohvabxHbYUVrZLZDsxmxbufdpmz6ykZVY6w65FFCygtQMRRIUPF0xuXe9OnZTxGvJPcGpQT0Y5Pwg%3D%3D&JITPDRMType=Widevine&virtualDomain=001.live_hls.zte.com&videoid=ch00000090990000001286&recommendtype=0&stbid=02:00:00:00:00:00&terminalflag=1&profilecode=`;
 
   res.redirect(goToURL);
 });
