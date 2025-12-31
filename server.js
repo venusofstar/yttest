@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch");
+const http = require("http");
+const https = require("https");
 const { PassThrough } = require("stream");
 
 const app = express();
@@ -9,83 +11,230 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.raw({ type: "*/*" }));
 
-// Helper to generate ZTE-style IDs
-function makeId(channelId, offset = 0) {
-  const BASE = "ch0000009099000000";
-  return BASE + String(Number(channelId) + offset).padStart(4, "0");
+// =========================
+// KEEP-ALIVE AGENTS
+// =========================
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+
+// =========================
+// ORIGINS
+// =========================
+const ORIGINS = [
+  "http://143.44.136.67:6060",
+  "http://136.239.158.18:6610"
+];
+
+// =========================
+// PER-CHANNEL SESSION
+// =========================
+const channelSessions = new Map();
+
+function createSession(channelId) {
+  // Auto-generate ztecid per channelId
+  const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
+
+  return {
+    originIndex: Math.floor(Math.random() * ORIGINS.length),
+    startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
+    IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
+    userSession: Math.floor(Math.random() * 1e15).toString(),
+    ztecid // store auto-generated ztecid
+  };
 }
 
-// Dynamic IASHttpSessionId
-function generateIASHttpSessionId() {
-  return 'RR' + Date.now() + Math.floor(Math.random() * 1000000);
+function getSession(channelId) {
+  if (!channelSessions.has(channelId)) {
+    channelSessions.set(channelId, createSession(channelId));
+  }
+  return channelSessions.get(channelId);
 }
 
-// Dynamic usersessionid
-function generateUserSessionId() {
-  return Date.now();
+function rotateOrigin(session) {
+  session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// Function to construct upstream URL with all parameters
-function buildUpstreamURL(channelId, startNumber) {
-  const channelFull = makeId(channelId);
-  const videoid = makeId(channelId, 100);
-  const ztecid = makeId(channelId, 200);
-  const usersessionid = generateUserSessionId();
-  const IASHttpSessionId = generateIASHttpSessionId();
+// cleanup every 10 min
+setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
-  return `http://143.44.136.67:6060/001/2/${channelFull}/manifest.mpd` +
-    `?AuthInfo=Tajaqa%2FdPohvabxHbYUVrZLZDsxmxbufdpmz6ykZVY6w65FFCygtQMRRIUPF0xuXe9OnZTxGvJPcGpQT0Y5Pwg%3D%3D` +
-    `&JITPDRMType=Widevine` +
+// =========================
+// FETCH WITH STICKY ORIGIN
+// =========================
+async function fetchSticky(urlBuilder, req, session) {
+  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
+    const origin = ORIGINS[session.originIndex];
+    const url = urlBuilder(origin);
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+
+      const res = await fetch(url, {
+        agent: url.startsWith("https") ? httpsAgent : httpAgent,
+        headers: {
+          "User-Agent": req.headers["user-agent"] || "OTT",
+          "Accept": "*/*",
+          "Connection": "keep-alive"
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeout);
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res;
+
+    } catch (err) {
+      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
+      rotateOrigin(session);
+      await new Promise(r => setTimeout(r, 200)); // small delay before retry
+    }
+  }
+
+  throw new Error("All origins failed");
+}
+
+// =========================
+// HOME
+// =========================
+app.get("/", (_, res) => {
+  res.send(`
+    <html>
+      <head>
+        <title>Star Of Venus</title>
+        <style>
+          body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: #000;
+            margin: 0;
+            font-family: 'Arial', sans-serif;
+          }
+          h1 {
+            font-size: 4rem;
+            text-transform: uppercase;
+            background: linear-gradient(45deg, red, orange, yellow, green, blue, indigo, violet);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: rainbow 3s linear infinite;
+          }
+          @keyframes rainbow {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+          }
+        </style>
+      </head>
+      <body>
+        <h1>Star Of Venus</h1>
+      </body>
+    </html>
+  `);
+});
+
+// =========================
+// DASH/HLS PROXY
+// =========================
+app.get("/:channelId/*", async (req, res) => {
+  const { channelId } = req.params;
+  const path = req.params[0];
+  const session = getSession(channelId);
+
+  const authParams =
+    `JITPDRMType=Widevine` +
     `&virtualDomain=001.live_hls.zte.com` +
-    `&videoid=${videoid}` +
-    `&ztecid=${ztecid}` +
     `&m4s_min=1` +
-    `&usersessionid=${usersessionid}` +
     `&NeedJITP=1` +
     `&isjitp=0` +
-    `&startNumber=${startNumber}` +
+    `&startNumber=${session.startNumber}` +
     `&filedura=6` +
-    `&IASHttpSessionId=${IASHttpSessionId}`;
-}
+    `&ispcode=55` +
+    `&IASHttpSessionId=${session.IAS}` +
+    `&usersessionid=${session.userSession}` +
+    `&ztecid=${session.ztecid}`; // auto-generated per channel
 
-// Proxy MPD
-app.get("/1089/manifest.mpd", async (req, res) => {
   try {
-    const startNumber = req.query.startNumber || Math.floor(Date.now() / 1000);
-    const upstreamURL = buildUpstreamURL("1089", startNumber);
+    const upstream = await fetchSticky(origin => {
+      const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
+      return path.includes("?")
+        ? `${base}${path}&${authParams}`
+        : `${base}${path}?${authParams}`;
+    }, req, session);
 
-    const response = await fetch(upstreamURL);
-    if (!response.ok) throw new Error("Failed to fetch MPD");
+    // =========================
+    // MPD
+    // =========================
+    if (path.endsWith(".mpd")) {
+      let mpd = await upstream.text();
+      const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
-    const mpdContent = await response.text();
-    res.set("Content-Type", "application/dash+xml");
-    res.send(mpdContent);
+      mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
+      mpd = mpd.replace(
+        /<MPD([^>]*)>/,
+        `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
+      );
+
+      res.set({
+        "Content-Type": "application/dash+xml",
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*"
+      });
+
+      return res.send(mpd);
+    }
+
+    // =========================
+    // SEGMENTS
+    // =========================
+    res.set({
+      "Content-Type": "video/mp4",
+      "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+      "Connection": "keep-alive"
+    });
+
+    const proxyStream = new PassThrough();
+    proxyStream.pipe(res);
+
+    let lastChunk = Date.now();
+    const STALL_LIMIT = 3000;
+
+    // Stall detection
+    const stallTimer = setInterval(() => {
+      if (Date.now() - lastChunk > STALL_LIMIT) {
+        console.warn("⚠️ Segment stall detected, rotating origin...");
+        rotateOrigin(session);
+        upstream.body.destroy();
+      }
+    }, 500);
+
+    upstream.body.on("data", chunk => {
+      lastChunk = Date.now();
+      proxyStream.write(chunk);
+    });
+
+    upstream.body.on("end", () => {
+      clearInterval(stallTimer);
+      proxyStream.end();
+    });
+
+    upstream.body.on("error", err => {
+      console.warn("⚠️ Stream error, rotating origin...", err.message);
+      rotateOrigin(session);
+      proxyStream.end();
+    });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).send("Error fetching MPD");
+    console.error("❌ Proxy error:", err.message);
+    res.status(502).end();
   }
 });
 
-// Proxy .m4s segments dynamically
-app.get("/1089/:segment", async (req, res) => {
-  try {
-    const { segment } = req.params;
-    const startNumber = req.query.startNumber || Math.floor(Date.now() / 1000);
-    const upstreamURL = buildUpstreamURL("1089", startNumber)
-      .replace("manifest.mpd", segment); // point to segment
-
-    const upstreamResponse = await fetch(upstreamURL);
-    if (!upstreamResponse.ok) throw new Error("Failed to fetch segment");
-
-    res.set("Content-Type", upstreamResponse.headers.get("content-type") || "application/octet-stream");
-
-    // Stream directly to client
-    const passThrough = new PassThrough();
-    upstreamResponse.body.pipe(passThrough).pipe(res);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send("Error fetching segment");
-  }
+// =========================
+// START SERVER
+// =========================
+app.listen(PORT, () => {
+  console.log(`✅ DASH/HLS proxy running on port ${PORT}`);
 });
-
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
