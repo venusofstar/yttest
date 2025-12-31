@@ -61,7 +61,6 @@ app.get("/:channelId/manifest.mpd", async (req, res) => {
       `&virtualDomain=001.live_hls.zte.com` +
       `&videoid=${videoid}` +
       `&ztecid=${ztecid}` +
-      `&m4s_min=1` +
       `&usersessionid=${usersessionid}` +
       `&NeedJITP=1` +
       `&isjitp=0` +
