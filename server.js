@@ -10,24 +10,24 @@ app.use(cors());
 app.use(express.raw({ type: "*/*" }));
 
 // =========================
-// In-memory segment cache
+// In-memory cache
 // =========================
 const segmentCache = new Map();
-const CACHE_LIMIT = 500; // max segments in memory
-const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+const CACHE_LIMIT = 500;
+const CACHE_TTL = 1000 * 60 * 5;
 
 function setCache(key, data) {
   if (segmentCache.size > CACHE_LIMIT) {
     const firstKey = segmentCache.keys().next().value;
     segmentCache.delete(firstKey);
   }
-  segmentCache.set(key, { data, timestamp: Date.now() });
+  segmentCache.set(key, { data, time: Date.now() });
 }
 
 function getCache(key) {
   const cached = segmentCache.get(key);
   if (!cached) return null;
-  if (Date.now() - cached.timestamp > CACHE_TTL) {
+  if (Date.now() - cached.time > CACHE_TTL) {
     segmentCache.delete(key);
     return null;
   }
@@ -35,7 +35,7 @@ function getCache(key) {
 }
 
 // =========================
-// Helper to generate ZTE-style IDs
+// ID generator
 // =========================
 function makeId(channelId, offset = 0) {
   const BASE = "ch0000009099000000";
@@ -43,7 +43,7 @@ function makeId(channelId, offset = 0) {
 }
 
 // =========================
-// Proxy MPD
+// MPD Proxy
 // =========================
 app.get("/:channelId/manifest.mpd", async (req, res) => {
   try {
@@ -70,8 +70,7 @@ app.get("/:channelId/manifest.mpd", async (req, res) => {
     const response = await fetch(upstreamURL);
     let mpdText = await response.text();
 
-    // Rewrite BaseURL to proxy through our server
-    // Use absolute URL so player can request segments properly
+    // Rewrite BaseURL to proxy
     mpdText = mpdText.replace(
       /<BaseURL>(.*?)<\/BaseURL>/g,
       `<BaseURL>https://yttest-production.up.railway.app/${channelId}/</BaseURL>`
@@ -81,17 +80,17 @@ app.get("/:channelId/manifest.mpd", async (req, res) => {
     res.send(mpdText);
   } catch (err) {
     console.error(err);
-    res.status(500).send("Error fetching MPD");
+    res.status(500).send("MPD error");
   }
 });
 
 // =========================
-// Proxy segments (*.m4s) with caching
+// Segment Proxy (.m4s)
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   try {
     const { channelId } = req.params;
-    const segment = req.params[0]; // supports subfolders like Quality/00001.m4s
+    const segment = req.params[0];
     const cacheKey = `${channelId}_${segment}`;
 
     const cached = getCache(cacheKey);
@@ -112,7 +111,6 @@ app.get("/:channelId/*", async (req, res) => {
       `&virtualDomain=001.live_hls.zte.com` +
       `&videoid=${videoid}` +
       `&ztecid=${ztecid}` +
-      `&m4s_min=1` +
       `&usersessionid=${usersessionid}` +
       `&NeedJITP=1` +
       `&isjitp=0`;
@@ -137,10 +135,10 @@ app.get("/:channelId/*", async (req, res) => {
     pass.pipe(res);
   } catch (err) {
     console.error(err);
-    res.status(500).send("Error fetching segment");
+    res.status(500).send("Segment error");
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Fully playable DASH proxy running on port ${PORT}`);
+  console.log(`✅ DASH proxy running on port ${PORT}`);
 });
