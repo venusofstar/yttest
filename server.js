@@ -106,8 +106,7 @@ app.get("/:channelId/*", async (req, res) => {
     usersessionid: session.usersessionid,
     NeedJITP: "1",
     JITPMediaType: "DASH",
-    JITPDRMType: "NO",
-    m4s_min: "1"
+    JITPDRMType: "NO"
   });
 
   try {
@@ -119,7 +118,7 @@ app.get("/:channelId/*", async (req, res) => {
     }, req, session);
 
     // =========================
-    // MPD FIX (CRITICAL)
+    // MPD FIX
     // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
@@ -140,7 +139,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS (VLC FIX)
+    // SEGMENTS (VLC SAFE)
     // =========================
     res.status(req.headers.range ? 206 : 200);
     res.set({
