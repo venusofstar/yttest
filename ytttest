@@ -3,7 +3,7 @@
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363231383437343631323030313134:614762653768324e676a6b3577434733
 #EXTINF:-1 tvg-id="1086" tvg-logo="https://ottepg8.comclark.com:8443/iptvepg/images/markurl/mark_1723133792284.png" group-title="conv",PTV
-https://yttest-production.up.railway.app/1086/manifest.mpd
+https://starofvenus.qzz.io//1086/manifest.mpd
 #KODIPROP:inputstream.adaptive.manifest_type=mpd
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=31363231383439313133323034313530:78645370476a496d5756385231474332
