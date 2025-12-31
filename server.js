@@ -108,17 +108,18 @@ app.get("/", (_, res) => {
             justify-content: center;
             align-items: center;
             height: 100vh;
-            background: #000;
             margin: 0;
+            background-color: #000;
             font-family: 'Arial', sans-serif;
           }
           h1 {
             font-size: 4rem;
             text-transform: uppercase;
-            background: linear-gradient(45deg, red, orange, yellow, green, blue, indigo, violet);
+            background: linear-gradient(270deg, red, orange, yellow, green, blue, indigo, violet);
+            background-size: 1400% 1400%;
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            animation: rainbow 3s linear infinite;
+            animation: rainbow 10s ease infinite;
           }
           @keyframes rainbow {
             0% { background-position: 0% 50%; }
