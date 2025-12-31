@@ -4,7 +4,7 @@ const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Make routes case-insensitive (MPD = mpd)
+// Allow MPD / mpd / MPD
 app.set("case sensitive routing", false);
 
 app.use(cors());
@@ -25,20 +25,21 @@ app.get("/", (req, res) => {
   `);
 });
 
-// Helper to generate IDs
-function generateId(base, channelId, offset = 0) {
-  return base + String(Number(channelId) + offset).padStart(4, "0");
+// Helper
+function generateId(base, channelId) {
+  return base + String(Number(channelId)).padStart(4, "0");
 }
 
-// MPD proxy (works for .mpd / .MPD / .MpD)
+// MPD proxy
 app.get("/:channelId/manifest.mpd", (req, res) => {
   const { channelId } = req.params;
 
   const BASE_ID = "ch0000009099000000";
 
-  const fullChannelId = generateId(BASE_ID, channelId, 0);
-  const videoid = generateId(BASE_ID, channelId, 100);
-  const ztecid = generateId(BASE_ID, channelId, 200);
+  // SAME ID for channel, videoid & ztecid
+  const fullChannelId = generateId(BASE_ID, channelId);
+  const videoid = fullChannelId;
+  const ztecid = fullChannelId;
 
   const usersessionid = Date.now();
 
