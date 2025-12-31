@@ -6,46 +6,44 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// Home page
+// Home
 app.get("/", (req, res) => {
-res.send(  <html>   <head>   <title>AuthInfo Proxy</title>   </head>   <body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">   <h1>WELCOME</h1>   <p>😀</p>   <p>ENJOY YOUR LIFE</p>   </body>   </html>  );
+  res.send("OK");
 });
 
-// Auto-generate helper
-function generateId(base, channelId, offset = 0) {
-return base + String(Number(channelId) + offset).padStart(4, "0");
+// Helper to generate ZTE-style IDs
+function makeId(channelId, offset = 0) {
+  const BASE = "ch0000009099000000";
+  return BASE + String(Number(channelId) + offset).padStart(4, "0");
 }
 
-// Proxy route
+// Target format:
+// https://yttest-production.up.railway.app/1093/manifest.mpd
 app.get("/:channelId/manifest.mpd", (req, res) => {
-const { channelId } = req.params;
+  const { channelId } = req.params;
 
-const BASE_ID = "ch0000009099000000";
+  const channelFull = makeId(channelId);
+  const videoid = makeId(channelId, 100);
+  const ztecid = makeId(channelId, 200);
+  const usersessionid = Date.now();
 
-// Auto-generated IDs
-const fullChannelId = generateId(BASE_ID, channelId, 0);
-const videoid = generateId(BASE_ID, channelId, 100);
-const ztecid = generateId(BASE_ID, channelId, 200);
+  const redirectURL =
+    `http://143.44.136.67:6060/001/2/${channelFull}/manifest.mpd` +
+    `?AuthInfo=Tajaqa%2FdPohvabxHbYUVrZLZDsxmxbufdpmz6ykZVY6w65FFCygtQMRRIUPF0xuXe9OnZTxGvJPcGpQT0Y5Pwg%3D%3D` +
+    `&JITPDRMType=Widevine` +
+    `&virtualDomain=001.live_hls.zte.com` +
+    `&videoid=${videoid}` +
+    `&ztecid=${ztecid}` +
+    `&m4s_min=1` +
+    `&usersessionid=${usersessionid}` +
+    `&NeedJITP=1` +
+    `&isjitp=0` +
+    `&startNumber=46310365` +
+    `&filedura=6`;
 
-// Auto session id
-const usersessionid = Date.now();
-
-const goToURL =
-http://143.44.136.67:6060/001/2/${fullChannelId}/manifest.mpd +
-?AuthInfo=Tajaqa%2FdPohvabxHbYUVrZLZDsxmxbufdpmz6ykZVY6w65FFCygtQMRRIUPF0xuXe9OnZTxGvJPcGpQT0Y5Pwg%3D%3D +
-&JITPDRMType=Widevine +
-&virtualDomain=001.live_hls.zte.com +
-&videoid=${videoid} +
-&ztecid=${ztecid} +
-&usersessionid=${usersessionid} +
-&NeedJITP=1 +
-&isjitp=0 +
-&startNumber=46310365 +
-&filedura=6;
-
-res.redirect(goToURL);
+  res.redirect(redirectURL);
 });
 
 app.listen(PORT, () => {
-console.log(✅ Server running on port ${PORT});
+  console.log(`Server running on port ${PORT}`);
 });
