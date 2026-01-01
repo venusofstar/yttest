@@ -12,7 +12,7 @@ app.use(cors());
 app.use(express.raw({ type: "*/*" }));
 
 // =========================
-// DELAY CONFIG (ONLY CHANGE)
+// DELAY (PLAYABLE)
 // =========================
 const STREAM_DELAY_MS = 5000;
 
@@ -37,7 +37,6 @@ const channelSessions = new Map();
 
 function createSession(channelId) {
   const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
-
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
@@ -83,26 +82,16 @@ async function fetchSticky(urlBuilder, req, session) {
       });
 
       clearTimeout(timeout);
-
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res;
 
     } catch (err) {
-      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
       rotateOrigin(session);
       await new Promise(r => setTimeout(r, 200));
     }
   }
-
   throw new Error("All origins failed");
 }
-
-// =========================
-// HOME
-// =========================
-app.get("/", (_, res) => {
-  res.send("Star Of Venus");
-});
 
 // =========================
 // DASH/HLS PROXY
@@ -113,10 +102,9 @@ app.get("/:channelId/*", async (req, res) => {
   const session = getSession(channelId);
 
   const authParams =
-    `JITPDRMType=Widevine` +
+    `JITPDRMType=NO` +
     `&virtualDomain=001.live_hls.zte.com` +
     `&m4s_min=1` +
-    `&JITPDRMType=NO` +
     `&isjitp=0` +
     `&startNumber=${session.startNumber}` +
     `&filedura=6` +
@@ -156,7 +144,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS (ONLY DELAY ADDED)
+    // SEGMENTS (PLAYABLE DELAY)
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -173,36 +161,30 @@ app.get("/:channelId/*", async (req, res) => {
 
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin...");
         rotateOrigin(session);
         upstream.body.destroy();
       }
     }, 500);
 
-    upstream.body.on("data", chunk => {
-      lastChunk = Date.now();
+    // ⏱️ DELAY START — NOT CHUNKS
+    setTimeout(() => {
+      upstream.body.on("data", chunk => {
+        lastChunk = Date.now();
+        proxyStream.write(chunk);
+      });
 
-      // ⏱️ ONLY CHANGE — 5 SECOND DELAY
-      setTimeout(() => {
-        if (!res.writableEnded) {
-          proxyStream.write(chunk);
-        }
-      }, STREAM_DELAY_MS);
-    });
+      upstream.body.on("end", () => {
+        clearInterval(stallTimer);
+        proxyStream.end();
+      });
 
-    upstream.body.on("end", () => {
-      clearInterval(stallTimer);
-      proxyStream.end();
-    });
-
-    upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error, rotating origin...", err.message);
-      rotateOrigin(session);
-      proxyStream.end();
-    });
+      upstream.body.on("error", () => {
+        rotateOrigin(session);
+        proxyStream.end();
+      });
+    }, STREAM_DELAY_MS);
 
   } catch (err) {
-    console.error("❌ Proxy error:", err.message);
     res.status(502).end();
   }
 });
