@@ -138,7 +138,7 @@ app.get("/", (_, res) => {
 // =========================
 // DASH/HLS PROXY
 // =========================
-app.get("/:channelId/*", async (req, res) => {
+app.get("/converge/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
   const path = req.params[0];
   const session = getSession(channelId);
