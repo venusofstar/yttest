@@ -14,8 +14,17 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
 
 // =========================
 // ORIGINS
@@ -31,15 +40,16 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  // Auto-generate ztecid per channelId
-  const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
+  const ztecid = `ch0000009099000000${channelId}${Math.floor(
+    Math.random() * 9000 + 1000
+  )}`;
 
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid // store auto-generated ztecid
+    ztecid
   };
 }
 
@@ -54,7 +64,7 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup every 10 min
+// cleanup every 10 minutes
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
@@ -85,9 +95,9 @@ async function fetchSticky(urlBuilder, req, session) {
       return res;
 
     } catch (err) {
-      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
+      console.error("⚠️ Origin failed:", origin, err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200)); // small delay before retry
+      await new Promise(r => setTimeout(r, 200));
     }
   }
 
@@ -104,39 +114,35 @@ app.get("/", (_, res) => {
         <title>Star Of Venus</title>
         <style>
           body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #000;
-            font-family: 'Arial', sans-serif;
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            height:100vh;
+            background:#000;
+            margin:0;
           }
           h1 {
-            font-size: 4rem;
-            text-transform: uppercase;
-            background: linear-gradient(270deg, red, orange, yellow, green, blue, indigo, violet);
-            background-size: 1400% 1400%;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            animation: rainbow 10s ease infinite;
+            font-size:4rem;
+            background:linear-gradient(270deg,red,orange,yellow,green,blue,indigo,violet);
+            background-size:1400% 1400%;
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            animation:rainbow 10s ease infinite;
           }
           @keyframes rainbow {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
+            0% { background-position:0% 50%; }
+            50% { background-position:100% 50%; }
+            100% { background-position:0% 50%; }
           }
         </style>
       </head>
-      <body>
-        <h1>Star Of Venus</h1>
-      </body>
+      <body><h1>Star Of Venus</h1></body>
     </html>
   `);
 });
 
 // =========================
-// DASH/HLS PROXY
+// DASH / HLS PROXY
 // =========================
 app.get("/converge/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -144,19 +150,17 @@ app.get("/converge/:channelId/*", async (req, res) => {
   const session = getSession(channelId);
 
   const authParams =
-    
     `AuthInfo=ugyrpPX71bbFBJqAe4f1yE0kOteuCHrsbRMPIQGqpT5BCCDeDIJn9rDuWx8BszuX2OhJ3l8Zgn1E37D56Kc9IQ%3D%3D` +
-    `&JITPDRMType=Widevine` +
+    `&JITPDRMType=NO` +
     `&virtualDomain=001.live_hls.zte.com` +
     `&m4s_min=1` +
-    `&JITPDRMType=NO` +
     `&isjitp=0` +
     `&startNumber=${session.startNumber}` +
     `&filedura=6` +
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}`; // auto-generated per channel
+    `&ztecid=${session.ztecid}`;
 
   try {
     const upstream = await fetchSticky(origin => {
@@ -167,11 +171,11 @@ app.get("/converge/:channelId/*", async (req, res) => {
     }, req, session);
 
     // =========================
-    // MPD
+    // MPD HANDLING
     // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
-      const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
+      const proxyBase = `${req.protocol}://${req.get("host")}/converge/${channelId}/`;
 
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
       mpd = mpd.replace(
@@ -204,10 +208,9 @@ app.get("/converge/:channelId/*", async (req, res) => {
     let lastChunk = Date.now();
     const STALL_LIMIT = 3000;
 
-    // Stall detection
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin...");
+        console.warn("⚠️ Stall detected, rotating origin");
         rotateOrigin(session);
         upstream.body.destroy();
       }
@@ -224,7 +227,7 @@ app.get("/converge/:channelId/*", async (req, res) => {
     });
 
     upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error, rotating origin...", err.message);
+      console.warn("⚠️ Stream error:", err.message);
       rotateOrigin(session);
       proxyStream.end();
     });
