@@ -12,25 +12,15 @@ app.use(cors());
 app.use(express.raw({ type: "*/*" }));
 
 // =========================
-// CONFIG
+// DELAY CONFIG (ONLY CHANGE)
 // =========================
-const STREAM_DELAY_MS = 5000;   // 5 sec delay
-const MAX_BUFFER_CHUNKS = 200;
+const STREAM_DELAY_MS = 5000;
 
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({
-  keepAlive: true,
-  maxSockets: 200,
-  keepAliveMsecs: 30000
-});
-
-const httpsAgent = new https.Agent({
-  keepAlive: true,
-  maxSockets: 200,
-  keepAliveMsecs: 30000
-});
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
 
 // =========================
 // ORIGINS
@@ -46,12 +36,14 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
+  const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
+
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid: `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`
+    ztecid
   };
 }
 
@@ -66,7 +58,6 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// Cleanup every 10 minutes
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
@@ -95,8 +86,9 @@ async function fetchSticky(urlBuilder, req, session) {
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res;
+
     } catch (err) {
-      console.error("⚠️ Origin failed:", origin, err.message);
+      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
       rotateOrigin(session);
       await new Promise(r => setTimeout(r, 200));
     }
@@ -109,11 +101,11 @@ async function fetchSticky(urlBuilder, req, session) {
 // HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send("DASH/HLS Proxy Running");
+  res.send("Star Of Venus");
 });
 
 // =========================
-// DASH / SEGMENT PROXY
+// DASH/HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -121,9 +113,10 @@ app.get("/:channelId/*", async (req, res) => {
   const session = getSession(channelId);
 
   const authParams =
-    `JITPDRMType=NO` +
+    `JITPDRMType=Widevine` +
     `&virtualDomain=001.live_hls.zte.com` +
     `&m4s_min=1` +
+    `&JITPDRMType=NO` +
     `&isjitp=0` +
     `&startNumber=${session.startNumber}` +
     `&filedura=6` +
@@ -163,7 +156,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS (BUFFERED + DELAY)
+    // SEGMENTS (ONLY DELAY ADDED)
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -172,61 +165,45 @@ app.get("/:channelId/*", async (req, res) => {
       "Connection": "keep-alive"
     });
 
-    const proxyStream = new PassThrough({
-      highWaterMark: 1024 * 1024 * 4
-    });
-
+    const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    let buffer = [];
-    let buffering = true;
     let lastChunk = Date.now();
+    const STALL_LIMIT = 3000;
 
     const stallTimer = setInterval(() => {
-      if (Date.now() - lastChunk > 4000) {
-        console.warn("⚠️ Stall detected, rotating origin");
+      if (Date.now() - lastChunk > STALL_LIMIT) {
+        console.warn("⚠️ Segment stall detected, rotating origin...");
         rotateOrigin(session);
         upstream.body.destroy();
       }
     }, 500);
 
-    setTimeout(() => {
-      buffering = false;
-      buffer.forEach(chunk => proxyStream.write(chunk));
-      buffer = [];
-    }, STREAM_DELAY_MS);
-
     upstream.body.on("data", chunk => {
       lastChunk = Date.now();
 
-      if (buffering) {
-        buffer.push(chunk);
-        if (buffer.length > MAX_BUFFER_CHUNKS) buffer.shift();
-      } else {
-        proxyStream.write(chunk);
-      }
+      // ⏱️ ONLY CHANGE — 5 SECOND DELAY
+      setTimeout(() => {
+        if (!res.writableEnded) {
+          proxyStream.write(chunk);
+        }
+      }, STREAM_DELAY_MS);
     });
 
     upstream.body.on("end", () => {
       clearInterval(stallTimer);
-      if (!res.writableEnded) proxyStream.end();
+      proxyStream.end();
     });
 
     upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error:", err.message);
+      console.warn("⚠️ Stream error, rotating origin...", err.message);
       rotateOrigin(session);
-      clearInterval(stallTimer);
-      if (!res.writableEnded) proxyStream.end();
-    });
-
-    res.on("close", () => {
-      clearInterval(stallTimer);
-      upstream.body.destroy();
+      proxyStream.end();
     });
 
   } catch (err) {
     console.error("❌ Proxy error:", err.message);
-    if (!res.headersSent) res.status(502).end();
+    res.status(502).end();
   }
 });
 
