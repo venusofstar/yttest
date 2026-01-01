@@ -10,9 +10,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
+app.options("*", cors());
 
 // =========================
-// AGENTS
+// KEEP-ALIVE AGENTS
 // =========================
 const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
@@ -30,13 +31,13 @@ const CHANNELS = {
 // HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send("✅ MPD → MPD PLAYABLE PROXY");
+  res.send("✅ Universal DASH Proxy – Player Ready");
 });
 
 // =========================
 // MPD + SEGMENT PROXY
 // =========================
-app.get("/:channel/*", async (req, res) => {
+app.all("/:channel/*", async (req, res) => {
   const { channel } = req.params;
   const reqPath = req.params[0];
 
@@ -46,27 +47,25 @@ app.get("/:channel/*", async (req, res) => {
 
   const baseMpd = new URL(CHANNELS[channel]);
 
-  // Build upstream URL
-  let upstreamUrl;
-  if (reqPath === "manifest.mpd") {
-    upstreamUrl = baseMpd.toString();
-  } else {
-    upstreamUrl = new URL(reqPath, baseMpd).toString();
-  }
+  let upstreamUrl =
+    reqPath === "manifest.mpd"
+      ? baseMpd.toString()
+      : new URL(reqPath, baseMpd).toString();
 
   try {
     const upstream = await fetch(upstreamUrl, {
+      method: req.method,
       agent: upstreamUrl.startsWith("https") ? httpsAgent : httpAgent,
       headers: {
         "User-Agent": req.headers["user-agent"] || "OTT",
         "Accept": "*/*",
+        "Range": req.headers.range || "",
         "Connection": "keep-alive"
       }
     });
 
-    if (!upstream.ok) {
-      return res.status(502).end();
-    }
+    // Pass through status (206 support)
+    res.status(upstream.status);
 
     // =========================
     // MPD
@@ -75,10 +74,7 @@ app.get("/:channel/*", async (req, res) => {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channel}/`;
 
-      // Remove upstream BaseURL
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
-
-      // Inject proxy BaseURL
       mpd = mpd.replace(
         /<MPD([^>]*)>/,
         `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
@@ -94,13 +90,12 @@ app.get("/:channel/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS (PLAYABLE)
+    // SEGMENTS (FULL PLAYER SUPPORT)
     // =========================
-    res.set({
-      "Content-Type": "video/mp4",
-      "Cache-Control": "no-store",
-      "Access-Control-Allow-Origin": "*",
-      "Connection": "keep-alive"
+    upstream.headers.forEach((value, key) => {
+      if (!["connection", "transfer-encoding"].includes(key.toLowerCase())) {
+        res.setHeader(key, value);
+      }
     });
 
     const stream = new PassThrough();
@@ -115,5 +110,5 @@ app.get("/:channel/*", async (req, res) => {
 // START
 // =========================
 app.listen(PORT, () => {
-  console.log(`✅ Playable DASH proxy running on port ${PORT}`);
+  console.log(`✅ Universal DASH proxy running on port ${PORT}`);
 });
