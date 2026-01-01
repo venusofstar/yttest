@@ -12,13 +12,13 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 
 // =========================
-// KEEP-ALIVE AGENTS
+// KEEP ALIVE AGENTS
 // =========================
 const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
 
 // =========================
-// CHANNEL → FULL MPD LINK
+// CHANNEL → ORIGINAL MPD
 // =========================
 const CHANNELS = {
   net25:
@@ -32,14 +32,15 @@ const CHANNELS = {
 // HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send("✅ 1 Channel = 1 Link DASH Proxy");
+  res.send("✅ MPD → MPD Proxy Running");
 });
 
 // =========================
-// PROXY ROUTE
+// PROXY (MPD + SEGMENTS)
 // =========================
-app.get("/:channel/*?", async (req, res) => {
+app.get("/:channel/*", async (req, res) => {
   const { channel } = req.params;
+  const extraPath = req.params[0];
 
   if (!CHANNELS[channel]) {
     return res.status(404).send("Unknown channel");
@@ -47,12 +48,12 @@ app.get("/:channel/*?", async (req, res) => {
 
   const baseMpdUrl = new URL(CHANNELS[channel]);
 
-  // If no extra path → MPD
+  // Build upstream URL
   let upstreamUrl;
-  if (!req.params[0]) {
+  if (extraPath === "manifest.mpd") {
     upstreamUrl = baseMpdUrl.toString();
   } else {
-    upstreamUrl = new URL(req.params[0], baseMpdUrl).toString();
+    upstreamUrl = new URL(extraPath, baseMpdUrl).toString();
   }
 
   try {
@@ -70,13 +71,16 @@ app.get("/:channel/*?", async (req, res) => {
     }
 
     // =========================
-    // MPD
+    // MPD REWRITE
     // =========================
     if (upstreamUrl.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channel}/`;
 
+      // Remove upstream BaseURL
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
+
+      // Inject proxy BaseURL
       mpd = mpd.replace(
         /<MPD([^>]*)>/,
         `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
@@ -102,9 +106,7 @@ app.get("/:channel/*?", async (req, res) => {
     });
 
     const stream = new PassThrough();
-    stream.pipe(res);
-
-    upstream.body.pipe(stream);
+    upstream.body.pipe(stream).pipe(res);
 
   } catch (err) {
     res.status(502).end();
@@ -112,8 +114,8 @@ app.get("/:channel/*?", async (req, res) => {
 });
 
 // =========================
-// START
+// START SERVER
 // =========================
 app.listen(PORT, () => {
-  console.log(`✅ Proxy running on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
