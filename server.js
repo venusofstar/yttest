@@ -1,6 +1,5 @@
 const express = require("express");
 const cors = require("cors");
-const fetch = require("node-fetch");
 const http = require("http");
 const https = require("https");
 const { PassThrough } = require("stream");
@@ -40,16 +39,12 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  const ztecid = `ch0000009099000000${channelId}${Math.floor(
-    Math.random() * 9000 + 1000
-  )}`;
-
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid
+    ztecid: `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`
   };
 }
 
@@ -64,18 +59,19 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup every 10 minutes
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
-// FETCH WITH STICKY ORIGIN
+// FETCH WITH FAILOVER
 // =========================
 async function fetchSticky(urlBuilder, req, session) {
-  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
+  for (let i = 0; i < ORIGINS.length; i++) {
     const origin = ORIGINS[session.originIndex];
     const url = urlBuilder(origin);
 
     try {
+      console.log("➡️ FETCH:", url);
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12000);
 
@@ -100,7 +96,6 @@ async function fetchSticky(urlBuilder, req, session) {
       await new Promise(r => setTimeout(r, 200));
     }
   }
-
   throw new Error("All origins failed");
 }
 
@@ -110,39 +105,22 @@ async function fetchSticky(urlBuilder, req, session) {
 app.get("/", (_, res) => {
   res.send(`
     <html>
-      <head>
-        <title>Star Of Venus</title>
-        <style>
-          body {
-            display:flex;
-            justify-content:center;
-            align-items:center;
-            height:100vh;
-            background:#000;
-            margin:0;
-          }
-          h1 {
-            font-size:4rem;
-            background:linear-gradient(270deg,red,orange,yellow,green,blue,indigo,violet);
-            background-size:1400% 1400%;
-            -webkit-background-clip:text;
-            -webkit-text-fill-color:transparent;
-            animation:rainbow 10s ease infinite;
-          }
-          @keyframes rainbow {
-            0% { background-position:0% 50%; }
-            50% { background-position:100% 50%; }
-            100% { background-position:0% 50%; }
-          }
-        </style>
-      </head>
-      <body><h1>Star Of Venus</h1></body>
+      <body style="background:black;display:flex;align-items:center;justify-content:center;height:100vh;">
+        <h1 style="font-size:4rem;
+          background:linear-gradient(270deg,red,orange,yellow,green,blue,indigo,violet);
+          background-size:1400% 1400%;
+          -webkit-background-clip:text;
+          -webkit-text-fill-color:transparent;
+          animation:rainbow 10s infinite;">
+          Star Of Venus
+        </h1>
+      </body>
     </html>
   `);
 });
 
 // =========================
-// DASH / HLS PROXY
+// DASH PROXY
 // =========================
 app.get("/converge/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -170,9 +148,7 @@ app.get("/converge/:channelId/*", async (req, res) => {
         : `${base}${path}?${authParams}`;
     }, req, session);
 
-    // =========================
-    // MPD HANDLING
-    // =========================
+    // ===== MPD =====
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/converge/${channelId}/`;
@@ -192,24 +168,19 @@ app.get("/converge/:channelId/*", async (req, res) => {
       return res.send(mpd);
     }
 
-    // =========================
-    // SEGMENTS
-    // =========================
+    // ===== SEGMENTS =====
     res.set({
       "Content-Type": "video/mp4",
       "Cache-Control": "no-store",
-      "Access-Control-Allow-Origin": "*",
-      "Connection": "keep-alive"
+      "Access-Control-Allow-Origin": "*"
     });
 
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
     let lastChunk = Date.now();
-    const STALL_LIMIT = 3000;
-
     const stallTimer = setInterval(() => {
-      if (Date.now() - lastChunk > STALL_LIMIT) {
+      if (Date.now() - lastChunk > 3000) {
         console.warn("⚠️ Stall detected, rotating origin");
         rotateOrigin(session);
         upstream.body.destroy();
@@ -226,21 +197,20 @@ app.get("/converge/:channelId/*", async (req, res) => {
       proxyStream.end();
     });
 
-    upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error:", err.message);
+    upstream.body.on("error", () => {
       rotateOrigin(session);
       proxyStream.end();
     });
 
   } catch (err) {
-    console.error("❌ Proxy error:", err.message);
+    console.error("❌ PROXY ERROR:", err.message);
     res.status(502).end();
   }
 });
 
 // =========================
-// START SERVER
+// START
 // =========================
 app.listen(PORT, () => {
-  console.log(`✅ DASH/HLS proxy running on port ${PORT}`);
+  console.log(`✅ Proxy running on port ${PORT}`);
 });
