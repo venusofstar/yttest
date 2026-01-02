@@ -14,25 +14,15 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({
-  keepAlive: true,
-  maxSockets: 200,
-  keepAliveMsecs: 30000
-});
-
-const httpsAgent = new https.Agent({
-  keepAlive: true,
-  maxSockets: 200,
-  keepAliveMsecs: 30000
-});
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
 
 // =========================
 // ORIGINS
 // =========================
 const ORIGINS = [
-  "http://136.239.158.30:6610",
-  "http://136.158.97.2:6610",
-  "http://136.239.173.10:6610"
+  "http://143.44.136.67:6060",
+  "http://136.239.158.18:6610"
 ];
 
 // =========================
@@ -45,15 +35,10 @@ function createSession(channelId) {
 
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
-    nextOriginIndex: null, // queued rotation
-
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid,
-
-    rotateTimer: null,
-    lastActive: Date.now()
+    ztecid
   };
 }
 
@@ -64,98 +49,109 @@ function getSession(channelId) {
   return channelSessions.get(channelId);
 }
 
-// =========================
-// SAFE AUTO ROTATION (28s, NO BUFFER)
-// =========================
-function startAutoRotate(session) {
-  if (session.rotateTimer) return;
-
-  session.rotateTimer = setInterval(() => {
-    session.nextOriginIndex =
-      (session.originIndex + 1) % ORIGINS.length;
-
-    console.log("🔄 Origin queued:", ORIGINS[session.nextOriginIndex]);
-  }, 28000); // ⏱️ 28 seconds
+function rotateOrigin(session) {
+  session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-function stopAutoRotate(session) {
-  if (session.rotateTimer) {
-    clearInterval(session.rotateTimer);
-    session.rotateTimer = null;
-  }
-}
-
-// Stop rotation when inactive
+// =========================
+// ROTATE IASHttpSessionId & usersessionid EVERY 20 SECONDS
+// =========================
 setInterval(() => {
-  const now = Date.now();
+  channelSessions.forEach(session => {
+    session.IAS = "RR" + Date.now() + Math.random().toString(36).slice(2, 10);
+    session.userSession = Math.floor(Math.random() * 1e15).toString();
+    // console.log("🔄 Rotated session:", session.IAS, session.userSession);
+  });
+}, 20 * 1000);
 
-  for (const session of channelSessions.values()) {
-    if (now - session.lastActive > 15000) {
-      stopAutoRotate(session);
-    }
-  }
-}, 5000);
-
-// Cleanup sessions
+// Cleanup sessions every 10 min
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
 // FETCH WITH STICKY ORIGIN
 // =========================
 async function fetchSticky(urlBuilder, req, session) {
-  const origin = ORIGINS[session.originIndex];
-  const url = urlBuilder(origin);
+  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
+    const origin = ORIGINS[session.originIndex];
+    const url = urlBuilder(origin);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
 
-  try {
-    const res = await fetch(url, {
-      agent: url.startsWith("https") ? httpsAgent : httpAgent,
-      headers: {
-        "User-Agent": req.headers["user-agent"] || "OTT",
-        "Accept": "*/*",
-        "Connection": "keep-alive"
-      },
-      signal: controller.signal
-    });
+      const res = await fetch(url, {
+        agent: url.startsWith("https") ? httpsAgent : httpAgent,
+        headers: {
+          "User-Agent": req.headers["user-agent"] || "OTT",
+          "Accept": "*/*",
+          "Connection": "keep-alive"
+        },
+        signal: controller.signal
+      });
 
-    clearTimeout(timeout);
+      clearTimeout(timeout);
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res;
 
-  } catch (err) {
-    clearTimeout(timeout);
-    throw err;
+    } catch (err) {
+      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
+      rotateOrigin(session);
+      await new Promise(r => setTimeout(r, 200)); // small delay before retry
+    }
   }
+
+  throw new Error("All origins failed");
 }
 
 // =========================
 // HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send("Star Of Venus");
+  res.send(`
+    <html>
+      <head>
+        <title>Star Of Venus</title>
+        <style>
+          body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #000;
+            font-family: 'Arial', sans-serif;
+          }
+          h1 {
+            font-size: 4rem;
+            text-transform: uppercase;
+            background: linear-gradient(270deg, red, orange, yellow, green, blue, indigo, violet);
+            background-size: 1400% 1400%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: rainbow 10s ease infinite;
+          }
+          @keyframes rainbow {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+          }
+        </style>
+      </head>
+      <body>
+        <h1>Star Of Venus</h1>
+      </body>
+    </html>
+  `);
 });
 
 // =========================
-// DASH / HLS PROXY
+// DASH/HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
   const path = req.params[0];
   const session = getSession(channelId);
-
-  // Mark activity + start rotation
-  session.lastActive = Date.now();
-  startAutoRotate(session);
-
-  // ✅ Apply queued rotation safely (before fetch)
-  if (session.nextOriginIndex !== null) {
-    session.originIndex = session.nextOriginIndex;
-    session.nextOriginIndex = null;
-    console.log("✅ Origin switched:", ORIGINS[session.originIndex]);
-  }
 
   const authParams =
     `JITPDRMType=Widevine` +
@@ -164,7 +160,7 @@ app.get("/:channelId/*", async (req, res) => {
     `&JITPDRMType=NO` +
     `&isjitp=0` +
     `&startNumber=${session.startNumber}` +
-    `&filedura=10` +
+    `&filedura=6` +
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
@@ -201,7 +197,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS
+    // SEGMENTS WITH 3-SECOND DELAY
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -211,9 +207,36 @@ app.get("/:channelId/*", async (req, res) => {
     });
 
     const proxyStream = new PassThrough();
-    upstream.body.pipe(proxyStream).pipe(res);
+    proxyStream.pipe(res);
 
-    upstream.body.on("error", () => {
+    let lastChunk = Date.now();
+    const STALL_LIMIT = 3000;
+
+    const stallTimer = setInterval(() => {
+      if (Date.now() - lastChunk > STALL_LIMIT) {
+        console.warn("⚠️ Segment stall detected, rotating origin...");
+        rotateOrigin(session);
+        upstream.body.destroy();
+      }
+    }, 500);
+
+    upstream.body.on("data", chunk => {
+      lastChunk = Date.now();
+
+      // 3-second delay before sending each chunk
+      setTimeout(() => {
+        proxyStream.write(chunk);
+      }, 3000);
+    });
+
+    upstream.body.on("end", () => {
+      clearInterval(stallTimer);
+      proxyStream.end();
+    });
+
+    upstream.body.on("error", err => {
+      console.warn("⚠️ Stream error, rotating origin...", err.message);
+      rotateOrigin(session);
       proxyStream.end();
     });
 
