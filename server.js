@@ -45,12 +45,13 @@ function createSession(channelId) {
 
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
+    nextOriginIndex: null, // 🔥 queued rotation
+
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
     ztecid,
 
-    // 🔥 auto-rotation state
     rotateTimer: null,
     lastActive: Date.now()
   };
@@ -63,19 +64,17 @@ function getSession(channelId) {
   return channelSessions.get(channelId);
 }
 
-function rotateOrigin(session) {
-  session.originIndex = (session.originIndex + 1) % ORIGINS.length;
-}
-
 // =========================
-// AUTO ROTATION CONTROL
+// SAFE AUTO ROTATION (NO BUFFER)
 // =========================
 function startAutoRotate(session) {
   if (session.rotateTimer) return;
 
   session.rotateTimer = setInterval(() => {
-    rotateOrigin(session);
-    console.log("🔄 Auto rotate →", ORIGINS[session.originIndex]);
+    session.nextOriginIndex =
+      (session.originIndex + 1) % ORIGINS.length;
+
+    console.log("🔄 Origin queued:", ORIGINS[session.nextOriginIndex]);
   }, 6000);
 }
 
@@ -86,56 +85,50 @@ function stopAutoRotate(session) {
   }
 }
 
-// Stop rotation if channel inactive
+// Stop rotation when inactive
 setInterval(() => {
   const now = Date.now();
 
   for (const [channelId, session] of channelSessions.entries()) {
     if (now - session.lastActive > 15000) {
-      console.log("🛑 Channel inactive:", channelId);
       stopAutoRotate(session);
     }
   }
 }, 5000);
 
-// Cleanup sessions every 10 min
+// Cleanup sessions
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
 // FETCH WITH STICKY ORIGIN
 // =========================
 async function fetchSticky(urlBuilder, req, session) {
-  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
-    const origin = ORIGINS[session.originIndex];
-    const url = urlBuilder(origin);
+  const origin = ORIGINS[session.originIndex];
+  const url = urlBuilder(origin);
 
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
 
-      const res = await fetch(url, {
-        agent: url.startsWith("https") ? httpsAgent : httpAgent,
-        headers: {
-          "User-Agent": req.headers["user-agent"] || "OTT",
-          "Accept": "*/*",
-          "Connection": "keep-alive"
-        },
-        signal: controller.signal
-      });
+  try {
+    const res = await fetch(url, {
+      agent: url.startsWith("https") ? httpsAgent : httpAgent,
+      headers: {
+        "User-Agent": req.headers["user-agent"] || "OTT",
+        "Accept": "*/*",
+        "Connection": "keep-alive"
+      },
+      signal: controller.signal
+    });
 
-      clearTimeout(timeout);
+    clearTimeout(timeout);
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res;
 
-    } catch (err) {
-      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
-      rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200));
-    }
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
   }
-
-  throw new Error("All origins failed");
 }
 
 // =========================
@@ -153,9 +146,16 @@ app.get("/:channelId/*", async (req, res) => {
   const path = req.params[0];
   const session = getSession(channelId);
 
-  // 🔥 mark activity + start rotation
+  // Mark activity + start rotation
   session.lastActive = Date.now();
   startAutoRotate(session);
+
+  // ✅ Apply queued rotation SAFELY (before fetch)
+  if (session.nextOriginIndex !== null) {
+    session.originIndex = session.nextOriginIndex;
+    session.nextOriginIndex = null;
+    console.log("✅ Origin switched:", ORIGINS[session.originIndex]);
+  }
 
   const authParams =
     `JITPDRMType=Widevine` +
@@ -211,32 +211,9 @@ app.get("/:channelId/*", async (req, res) => {
     });
 
     const proxyStream = new PassThrough();
-    proxyStream.pipe(res);
+    upstream.body.pipe(proxyStream).pipe(res);
 
-    let lastChunk = Date.now();
-    const STALL_LIMIT = 3000;
-
-    const stallTimer = setInterval(() => {
-      if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Stall detected → rotate origin");
-        rotateOrigin(session);
-        upstream.body.destroy();
-      }
-    }, 500);
-
-    upstream.body.on("data", chunk => {
-      lastChunk = Date.now();
-      proxyStream.write(chunk);
-    });
-
-    upstream.body.on("end", () => {
-      clearInterval(stallTimer);
-      proxyStream.end();
-    });
-
-    upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error → rotate origin", err.message);
-      rotateOrigin(session);
+    upstream.body.on("error", () => {
       proxyStream.end();
     });
 
