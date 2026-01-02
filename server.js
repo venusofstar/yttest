@@ -32,7 +32,6 @@ const channelSessions = new Map();
 
 function createSession(channelId) {
   const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
-
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
@@ -60,7 +59,6 @@ setInterval(() => {
   channelSessions.forEach(session => {
     session.IAS = "RR" + Date.now() + Math.random().toString(36).slice(2, 10);
     session.userSession = Math.floor(Math.random() * 1e15).toString();
-    // console.log("🔄 Rotated session:", session.IAS, session.userSession);
   });
 }, 20 * 1000);
 
@@ -97,7 +95,7 @@ async function fetchSticky(urlBuilder, req, session) {
     } catch (err) {
       console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200)); // small delay before retry
+      await new Promise(r => setTimeout(r, 200));
     }
   }
 
@@ -197,7 +195,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS WITH 3-SECOND DELAY
+    // SEGMENTS WITH 3-SECOND DELAY ONLY FOR LIVE
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -223,10 +221,13 @@ app.get("/:channelId/*", async (req, res) => {
     upstream.body.on("data", chunk => {
       lastChunk = Date.now();
 
-      // 3-second delay before sending each chunk
-      setTimeout(() => {
+      if (path.endsWith(".m4s")) {
+        // 3-second delay for live segments only
+        setTimeout(() => proxyStream.write(chunk), 3000);
+      } else {
+        // immediate write for MPD/init/etc.
         proxyStream.write(chunk);
-      }, 3000);
+      }
     });
 
     upstream.body.on("end", () => {
