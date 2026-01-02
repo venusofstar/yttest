@@ -52,7 +52,7 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// Cleanup sessions every 10 minutes
+// cleanup every 10 min
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
@@ -134,7 +134,7 @@ app.get("/", (_, res) => {
 });
 
 // =========================
-// DASH/HLS SEGMENT PROXY
+// DASH/HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -152,7 +152,7 @@ app.get("/:channelId/*", async (req, res) => {
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}`;
+    `&ztecid=${session.ztecid}`; // auto-generated per channel
 
   try {
     const upstream = await fetchSticky(origin => {
@@ -162,9 +162,9 @@ app.get("/:channelId/*", async (req, res) => {
         : `${base}${path}?${authParams}`;
     }, req, session);
 
-    // -------------------------
-    // DASH MPD
-    // -------------------------
+    // =========================
+    // MPD
+    // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
@@ -184,9 +184,9 @@ app.get("/:channelId/*", async (req, res) => {
       return res.send(mpd);
     }
 
-    // -------------------------
-    // SEGMENTS
-    // -------------------------
+    // =========================
+    // SEGMENTS WITH 2s DELAY ON LAST CHUNK
+    // =========================
     res.set({
       "Content-Type": "video/mp4",
       "Cache-Control": "no-store",
@@ -197,18 +197,27 @@ app.get("/:channelId/*", async (req, res) => {
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    // Pipe upstream body directly to client
-    upstream.body.pipe(proxyStream);
+    const reader = upstream.body.getReader();
 
-    upstream.body.on("end", () => proxyStream.end());
-    upstream.body.on("error", err => {
-      console.warn("⚠️ Segment stream error, rotating origin...", err.message);
+    async function pump() {
+      let result;
+      while (!(result = await reader.read()).done) {
+        proxyStream.write(result.value);
+      }
+
+      // Delay 2 seconds before ending the last chunk
+      await new Promise(r => setTimeout(r, 2000));
+      proxyStream.end();
+    }
+
+    pump().catch(err => {
+      console.warn("⚠️ Stream error, rotating origin...", err.message);
       rotateOrigin(session);
       proxyStream.end();
     });
 
   } catch (err) {
-    console.error("❌ Proxy fetch error:", err.message);
+    console.error("❌ Proxy error:", err.message);
     res.status(502).end();
   }
 });
