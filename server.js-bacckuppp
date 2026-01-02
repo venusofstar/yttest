@@ -31,7 +31,6 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  // Auto-generate ztecid per channelId
   const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
 
   return {
@@ -39,7 +38,7 @@ function createSession(channelId) {
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid // store auto-generated ztecid
+    ztecid
   };
 }
 
@@ -54,7 +53,18 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup every 10 min
+// =========================
+// ROTATE IASHttpSessionId & usersessionid EVERY 20 SECONDS
+// =========================
+setInterval(() => {
+  channelSessions.forEach(session => {
+    session.IAS = "RR" + Date.now() + Math.random().toString(36).slice(2, 10);
+    session.userSession = Math.floor(Math.random() * 1e15).toString();
+    // console.log("🔄 Rotated session:", session.IAS, session.userSession);
+  });
+}, 20 * 1000);
+
+// Cleanup sessions every 10 min
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
@@ -154,7 +164,7 @@ app.get("/:channelId/*", async (req, res) => {
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}`; // auto-generated per channel
+    `&ztecid=${session.ztecid}`;
 
   try {
     const upstream = await fetchSticky(origin => {
@@ -202,7 +212,6 @@ app.get("/:channelId/*", async (req, res) => {
     let lastChunk = Date.now();
     const STALL_LIMIT = 3000;
 
-    // Stall detection
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
         console.warn("⚠️ Segment stall detected, rotating origin...");
