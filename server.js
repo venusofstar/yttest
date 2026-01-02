@@ -14,8 +14,17 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
 
 // =========================
 // ORIGINS
@@ -23,7 +32,7 @@ const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAlive
 const ORIGINS = [
   "http://136.239.158.30:6610",
   "http://136.158.97.2:6610",
-  "http://136.239.173.10:6610",
+  "http://136.239.173.10:6610"
 ];
 
 // =========================
@@ -32,7 +41,6 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  // Auto-generate ztecid per channelId
   const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
 
   return {
@@ -40,7 +48,11 @@ function createSession(channelId) {
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid // store auto-generated ztecid
+    ztecid,
+
+    // 🔥 auto-rotation state
+    rotateTimer: null,
+    lastActive: Date.now()
   };
 }
 
@@ -55,7 +67,38 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup every 10 min
+// =========================
+// AUTO ROTATION CONTROL
+// =========================
+function startAutoRotate(session) {
+  if (session.rotateTimer) return;
+
+  session.rotateTimer = setInterval(() => {
+    rotateOrigin(session);
+    console.log("🔄 Auto rotate →", ORIGINS[session.originIndex]);
+  }, 6000);
+}
+
+function stopAutoRotate(session) {
+  if (session.rotateTimer) {
+    clearInterval(session.rotateTimer);
+    session.rotateTimer = null;
+  }
+}
+
+// Stop rotation if channel inactive
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [channelId, session] of channelSessions.entries()) {
+    if (now - session.lastActive > 15000) {
+      console.log("🛑 Channel inactive:", channelId);
+      stopAutoRotate(session);
+    }
+  }
+}, 5000);
+
+// Cleanup sessions every 10 min
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
@@ -88,7 +131,7 @@ async function fetchSticky(urlBuilder, req, session) {
     } catch (err) {
       console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200)); // small delay before retry
+      await new Promise(r => setTimeout(r, 200));
     }
   }
 
@@ -99,50 +142,20 @@ async function fetchSticky(urlBuilder, req, session) {
 // HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send(`
-    <html>
-      <head>
-        <title>Star Of Venus</title>
-        <style>
-          body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #000;
-            font-family: 'Arial', sans-serif;
-          }
-          h1 {
-            font-size: 4rem;
-            text-transform: uppercase;
-            background: linear-gradient(270deg, red, orange, yellow, green, blue, indigo, violet);
-            background-size: 1400% 1400%;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            animation: rainbow 10s ease infinite;
-          }
-          @keyframes rainbow {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-          }
-        </style>
-      </head>
-      <body>
-        <h1>Star Of Venus</h1>
-      </body>
-    </html>
-  `);
+  res.send("Star Of Venus");
 });
 
 // =========================
-// DASH/HLS PROXY
+// DASH / HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
   const path = req.params[0];
   const session = getSession(channelId);
+
+  // 🔥 mark activity + start rotation
+  session.lastActive = Date.now();
+  startAutoRotate(session);
 
   const authParams =
     `JITPDRMType=Widevine` +
@@ -155,7 +168,7 @@ app.get("/:channelId/*", async (req, res) => {
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}`; // auto-generated per channel
+    `&ztecid=${session.ztecid}`;
 
   try {
     const upstream = await fetchSticky(origin => {
@@ -203,10 +216,9 @@ app.get("/:channelId/*", async (req, res) => {
     let lastChunk = Date.now();
     const STALL_LIMIT = 3000;
 
-    // Stall detection
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin...");
+        console.warn("⚠️ Stall detected → rotate origin");
         rotateOrigin(session);
         upstream.body.destroy();
       }
@@ -223,7 +235,7 @@ app.get("/:channelId/*", async (req, res) => {
     });
 
     upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error, rotating origin...", err.message);
+      console.warn("⚠️ Stream error → rotate origin", err.message);
       rotateOrigin(session);
       proxyStream.end();
     });
