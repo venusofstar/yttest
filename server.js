@@ -62,7 +62,7 @@ function generateUserSession() {
   return Math.floor(Math.random() * 1e15).toString();
 }
 
-// Rotate session IDs every 20s for all active channels
+// Rotate session IDs every 20 seconds for all active channels
 setInterval(() => {
   channelSessions.forEach(session => {
     session.IAS = generateIAS();
@@ -70,7 +70,7 @@ setInterval(() => {
   });
 }, 20_000);
 
-// Cleanup old sessions every 10 minutes
+// Cleanup sessions every 10 minutes
 setInterval(() => channelSessions.clear(), 10 * 60_000);
 
 // =========================
@@ -135,7 +135,7 @@ function isLiveSegment(path) {
 }
 
 // =========================
-// STREAM SEGMENT WITH OPTIONAL DELAY
+// STREAM SEGMENT WITH NON-BLOCKING DELAY
 // =========================
 async function streamSegment(upstream, res, path) {
   const proxyStream = new PassThrough();
@@ -152,13 +152,18 @@ async function streamSegment(upstream, res, path) {
     }
   }, 500);
 
+  const isLive = isLiveSegment(path);
+
   try {
     for await (const chunk of upstream.body) {
       lastChunk = Date.now();
-      if (isLiveSegment(path)) {
-        await new Promise(r => setTimeout(r, 3000)); // 3s delay for live
+
+      if (isLive) {
+        // Non-blocking 3-second delay for live segments
+        setTimeout(() => proxyStream.write(chunk), 3000);
+      } else {
+        proxyStream.write(chunk);
       }
-      proxyStream.write(chunk);
     }
   } catch (err) {
     console.warn("⚠️ Stream error:", err.message);
