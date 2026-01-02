@@ -185,7 +185,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS WITH 2s DELAY ON LAST CHUNK
+    // SEGMENTS WITH SAFE 2s DELAY
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -198,15 +198,28 @@ app.get("/:channelId/*", async (req, res) => {
     proxyStream.pipe(res);
 
     const reader = upstream.body.getReader();
+    let prevChunk = null;
 
     async function pump() {
-      let result;
-      while (!(result = await reader.read()).done) {
-        proxyStream.write(result.value);
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) {
+          // send last chunk with 2s delay
+          if (prevChunk) {
+            proxyStream.write(prevChunk);
+            await new Promise(r => setTimeout(r, 2000));
+          }
+          break;
+        }
+
+        // write previous chunk immediately
+        if (prevChunk) proxyStream.write(prevChunk);
+
+        // hold current chunk for last-chunk delay
+        prevChunk = value;
       }
 
-      // Delay 2 seconds before ending the last chunk
-      await new Promise(r => setTimeout(r, 2000));
       proxyStream.end();
     }
 
