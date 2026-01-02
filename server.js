@@ -45,7 +45,7 @@ function createSession(channelId) {
 
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
-    nextOriginIndex: null, // 🔥 queued rotation
+    nextOriginIndex: null, // queued rotation
 
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
@@ -65,7 +65,7 @@ function getSession(channelId) {
 }
 
 // =========================
-// SAFE AUTO ROTATION (NO BUFFER)
+// SAFE AUTO ROTATION (28s, NO BUFFER)
 // =========================
 function startAutoRotate(session) {
   if (session.rotateTimer) return;
@@ -75,7 +75,7 @@ function startAutoRotate(session) {
       (session.originIndex + 1) % ORIGINS.length;
 
     console.log("🔄 Origin queued:", ORIGINS[session.nextOriginIndex]);
-  }, 6000);
+  }, 28000); // ⏱️ 28 seconds
 }
 
 function stopAutoRotate(session) {
@@ -89,7 +89,7 @@ function stopAutoRotate(session) {
 setInterval(() => {
   const now = Date.now();
 
-  for (const [channelId, session] of channelSessions.entries()) {
+  for (const session of channelSessions.values()) {
     if (now - session.lastActive > 15000) {
       stopAutoRotate(session);
     }
@@ -150,7 +150,7 @@ app.get("/:channelId/*", async (req, res) => {
   session.lastActive = Date.now();
   startAutoRotate(session);
 
-  // ✅ Apply queued rotation SAFELY (before fetch)
+  // ✅ Apply queued rotation safely (before fetch)
   if (session.nextOriginIndex !== null) {
     session.originIndex = session.nextOriginIndex;
     session.nextOriginIndex = null;
