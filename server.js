@@ -85,7 +85,7 @@ async function fetchSticky(urlBuilder, req, session) {
     } catch (err) {
       console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200)); // small delay before retry
+      await new Promise(r => setTimeout(r, 200));
     }
   }
 
@@ -134,14 +134,14 @@ app.get("/", (_, res) => {
 });
 
 // =========================
-// DASH/HLS PROXY ROUTE
+// DASH/HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
   const path = req.params[0];
   const session = getSession(channelId);
 
-  const authParams = 
+  const authParams =
     `JITPDRMType=Widevine` +
     `&virtualDomain=001.live_hls.zte.com` +
     `&m4s_min=1` +
@@ -163,7 +163,7 @@ app.get("/:channelId/*", async (req, res) => {
     }, req, session);
 
     // =========================
-    // MPD MANIFEST
+    // MPD
     // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
@@ -185,7 +185,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS (.m4s) SUPER FAST ORIGIN ROTATION
+    // SEGMENTS
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -194,36 +194,42 @@ app.get("/:channelId/*", async (req, res) => {
       "Connection": "keep-alive"
     });
 
+    const SEGMENT_DURATION = 6000; // ms (filedura=6)
+    const PREEMPTIVE_ROTATE = 2000; // rotate 2s before segment ends
+    const STALL_LIMIT = 3000; // stall detection
+
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    let lastChunk = Date.now();
-    const STALL_LIMIT = 3000;
-
-    // Auto-increment startNumber for next segment
-    session.startNumber += 1;
-
-    // Rotate origin before streaming (super fast rotation)
-    rotateOrigin(session);
+    let lastChunkTime = Date.now();
+    let preemptiveRotated = false;
 
     const stallTimer = setInterval(() => {
-      if (Date.now() - lastChunk > STALL_LIMIT) {
+      const now = Date.now();
+
+      // ⚡ Preemptive rotation
+      if (!preemptiveRotated && now - lastChunkTime >= SEGMENT_DURATION - PREEMPTIVE_ROTATE) {
+        console.log("⚡ Preemptive origin rotation before segment end...");
+        rotateOrigin(session);
+        preemptiveRotated = true;
+      }
+
+      // Stall detection
+      if (now - lastChunkTime > STALL_LIMIT) {
         console.warn("⚠️ Segment stall detected, rotating origin...");
         rotateOrigin(session);
         upstream.body.destroy();
       }
-    }, 500);
+    }, 200);
 
     upstream.body.on("data", chunk => {
-      lastChunk = Date.now();
+      lastChunkTime = Date.now();
       proxyStream.write(chunk);
     });
 
     upstream.body.on("end", () => {
       clearInterval(stallTimer);
       proxyStream.end();
-      // Rotate origin again for next segment
-      rotateOrigin(session);
     });
 
     upstream.body.on("error", err => {
