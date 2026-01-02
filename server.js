@@ -21,9 +21,8 @@ const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAlive
 // ORIGINS
 // =========================
 const ORIGINS = [
-  "http://136.239.158.30:6610",
-  "http://136.158.97.2:6610",
-  "http://136.239.173.10:6610",
+  "http://143.44.136.67:6060",
+  "http://136.239.158.18:6610"
 ];
 
 // =========================
@@ -32,15 +31,13 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  // Auto-generate ztecid per channelId
   const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
-
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid // store auto-generated ztecid
+    ztecid
   };
 }
 
@@ -148,6 +145,7 @@ app.get("/:channelId/*", async (req, res) => {
     `JITPDRMType=Widevine` +
     `&virtualDomain=001.live_hls.zte.com` +
     `&m4s_min=1` +
+    `&JITPDRMType=NO` +
     `&isjitp=0` +
     `&startNumber=${session.startNumber}` +
     `&filedura=6` +
@@ -199,28 +197,9 @@ app.get("/:channelId/*", async (req, res) => {
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    let lastChunk = Date.now();
-    const STALL_LIMIT = 3000;
-
-    // Stall detection
-    const stallTimer = setInterval(() => {
-      if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin...");
-        rotateOrigin(session);
-        upstream.body.destroy();
-      }
-    }, 500);
-
-    upstream.body.on("data", chunk => {
-      lastChunk = Date.now();
-      proxyStream.write(chunk);
-    });
-
-    upstream.body.on("end", () => {
-      clearInterval(stallTimer);
-      proxyStream.end();
-    });
-
+    // Only rotate origin on **fetch failure**, not mid-segment
+    upstream.body.pipe(proxyStream);
+    upstream.body.on("end", () => proxyStream.end());
     upstream.body.on("error", err => {
       console.warn("⚠️ Stream error, rotating origin...", err.message);
       rotateOrigin(session);
