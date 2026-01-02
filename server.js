@@ -21,7 +21,6 @@ const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAlive
 // ORIGINS
 // =========================
 const ORIGINS = [
-
   "http://136.239.158.30:6610",
   "http://136.158.97.2:6610",
   "http://136.239.173.10:6610"
