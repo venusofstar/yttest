@@ -14,17 +14,8 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({
-  keepAlive: true,
-  maxSockets: 300,
-  keepAliveMsecs: 30000
-});
-
-const httpsAgent = new https.Agent({
-  keepAlive: true,
-  maxSockets: 300,
-  keepAliveMsecs: 30000
-});
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 300, keepAliveMsecs: 30000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 300, keepAliveMsecs: 30000 });
 
 // =========================
 // ORIGINS
@@ -36,8 +27,11 @@ const ORIGINS = [
   "http://136.239.159.20:6610"
 ];
 
+// Origin health score (higher = more reliable)
+const originHealth = ORIGINS.reduce((acc, o) => { acc[o] = 100; return acc; }, {});
+
 // =========================
-// PER-CHANNEL SESSION
+// CHANNEL SESSIONS
 // =========================
 const channelSessions = new Map();
 
@@ -62,15 +56,18 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup
+// Cleanup
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
-// FETCH WITH ROTATION
+// FETCH WITH HEALTH SCORING
 // =========================
 async function fetchSticky(urlBuilder, req, session) {
-  for (let i = 0; i < ORIGINS.length; i++) {
-    const origin = ORIGINS[session.originIndex];
+  // Sort origins by health descending
+  const sortedOrigins = [...ORIGINS].sort((a, b) => originHealth[b] - originHealth[a]);
+
+  for (let i = 0; i < sortedOrigins.length; i++) {
+    const origin = sortedOrigins[session.originIndex % sortedOrigins.length];
     const url = urlBuilder(origin);
 
     try {
@@ -90,23 +87,21 @@ async function fetchSticky(urlBuilder, req, session) {
       clearTimeout(timeout);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // Successful fetch → increase health
+      originHealth[origin] = Math.min(originHealth[origin] + 5, 100);
       return res;
 
-    } catch (e) {
-      console.warn("⚠️ Origin failed:", ORIGINS[session.originIndex]);
+    } catch (err) {
+      console.warn("⚠️ Origin failed:", origin, err.message);
+      // Reduce health
+      originHealth[origin] = Math.max(originHealth[origin] - 20, 0);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 150));
+      await new Promise(r => setTimeout(r, 100));
     }
   }
   throw new Error("All origins failed");
 }
-
-// =========================
-// HOME
-// =========================
-app.get("/", (_, res) => {
-  res.send("DASH/HLS Proxy Running");
-});
 
 // =========================
 // DASH / HLS PROXY
@@ -160,7 +155,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS (PREFETCH + HOT SWAP)
+    // SEGMENTS (NEXT SEGMENT PREFETCH + MULTI ORIGIN)
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -169,82 +164,105 @@ app.get("/:channelId/*", async (req, res) => {
       "Connection": "keep-alive"
     });
 
-    const SEGMENT_DURATION = 6000;
-    const PREFETCH_AT = 4000;
+    const SEGMENT_DURATION = 6000; // default, adaptive can update
     const STALL_LIMIT = 3000;
 
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
+    let activeSegmentNumber = session.startNumber;
     let activeStream = upstream.body;
-    let prefetchStream = null;
+
+    // PREFETCH POOL
+    let prefetchStreams = []; // max 2 hot origins
     let lastChunkTime = Date.now();
-    let prefetched = false;
-    let switched = false;
 
-    async function startPrefetch() {
-      if (prefetched) return;
-      prefetched = true;
+    const switched = { value: false };
 
-      const nextSession = { ...session };
-      rotateOrigin(nextSession);
-
-      try {
-        const prefetchRes = await fetchSticky(origin => {
-          const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
-          return path.includes("?")
-            ? `${base}${path}&${authParams}`
-            : `${base}${path}?${authParams}`;
-        }, req, nextSession);
-
-        console.log("🔥 Prefetch ready:", ORIGINS[nextSession.originIndex]);
-        prefetchStream = prefetchRes.body;
-
-      } catch {
-        console.warn("⚠️ Prefetch failed");
-      }
-    }
-
-    const watchdog = setInterval(() => {
-      const now = Date.now();
-
-      if (!prefetched && now - lastChunkTime >= PREFETCH_AT) {
-        startPrefetch();
-      }
-
-      if (!switched && prefetchStream && now - lastChunkTime > STALL_LIMIT) {
-        console.warn("⚡ Stall → instant swap");
-        switched = true;
-        activeStream.destroy();
-        activeStream = prefetchStream;
-        pipeActive();
-      }
-    }, 200);
-
-    function pipeActive() {
-      activeStream.on("data", chunk => {
+    // ---------- PIPE ACTIVE STREAM ----------
+    function pipeStream(stream) {
+      stream.on("data", chunk => {
         lastChunkTime = Date.now();
         proxyStream.write(chunk);
       });
 
-      activeStream.on("end", () => {
-        clearInterval(watchdog);
-        proxyStream.end();
+      stream.on("end", async () => {
+        if (!switched.value && prefetchStreams.length) {
+          // Hot swap to next prefetched
+          switched.value = true;
+          activeStream = prefetchStreams.shift();
+          activeSegmentNumber++;
+          pipeStream(activeStream);
+          prefetchNextSegments(); // keep multi-prefetch
+        } else {
+          proxyStream.end();
+        }
       });
 
-      activeStream.on("error", err => {
+      stream.on("error", err => {
         console.warn("⚠️ Stream error:", err.message);
-        if (prefetchStream && !switched) {
-          switched = true;
-          activeStream = prefetchStream;
-          pipeActive();
+        if (!switched.value && prefetchStreams.length) {
+          switched.value = true;
+          activeStream = prefetchStreams.shift();
+          activeSegmentNumber++;
+          pipeStream(activeStream);
+          prefetchNextSegments();
         } else {
           proxyStream.end();
         }
       });
     }
 
-    pipeActive();
+    pipeStream(activeStream);
+
+    // ---------- PREFETCH NEXT SEGMENTS ----------
+    async function prefetchNextSegments() {
+      while (prefetchStreams.length < 2) {
+        const nextSegment = activeSegmentNumber + prefetchStreams.length + 1;
+
+        const nextSession = { ...session };
+        rotateOrigin(nextSession);
+
+        try {
+          const prefetchRes = await fetchSticky(origin => {
+            const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
+            const nextPath = path.replace(/startNumber=\d+/, `startNumber=${nextSegment}`);
+            return nextPath.includes("?") ? `${base}${nextPath}&${authParams}` : `${base}${nextPath}?${authParams}`;
+          }, req, nextSession);
+
+          prefetchStreams.push(prefetchRes.body);
+          console.log(`🔥 Prefetched segment ${nextSegment} from ${ORIGINS[nextSession.originIndex]}`);
+
+        } catch (e) {
+          console.warn("⚠️ Prefetch failed", e.message);
+          break;
+        }
+      }
+    }
+
+    prefetchNextSegments();
+
+    // ---------- WATCHDOG (ADAPTIVE PREFETCH BASED ON LAST CHUNK) ----------
+    const watchdog = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - lastChunkTime;
+
+      // Adaptive prefetch threshold
+      const adaptivePrefetchAt = Math.max(1000, SEGMENT_DURATION - elapsed - 1000);
+      if (!switched.value && elapsed >= adaptivePrefetchAt) {
+        prefetchNextSegments();
+      }
+
+      if (elapsed > STALL_LIMIT && !switched.value && prefetchStreams.length) {
+        console.warn("⚡ Stall → instant swap");
+        switched.value = true;
+        activeStream.destroy();
+        activeStream = prefetchStreams.shift();
+        activeSegmentNumber++;
+        pipeStream(activeStream);
+        prefetchNextSegments();
+      }
+    }, 200);
 
   } catch (err) {
     console.error("❌ Proxy error:", err.message);
@@ -253,8 +271,8 @@ app.get("/:channelId/*", async (req, res) => {
 });
 
 // =========================
-// START
+// START SERVER
 // =========================
 app.listen(PORT, () => {
-  console.log(`✅ Proxy running on port ${PORT}`);
+  console.log(`✅ DASH/HLS proxy running on port ${PORT}`);
 });
