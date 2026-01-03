@@ -14,8 +14,17 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 300,
+  keepAliveMsecs: 30000
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 300,
+  keepAliveMsecs: 30000
+});
 
 // =========================
 // ORIGINS
@@ -33,13 +42,12 @@ const ORIGINS = [
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid
+    ztecid: `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`
   };
 }
 
@@ -54,14 +62,14 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup every 10 min
+// cleanup
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
-// FETCH WITH STICKY ORIGIN
+// FETCH WITH ROTATION
 // =========================
 async function fetchSticky(urlBuilder, req, session) {
-  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
+  for (let i = 0; i < ORIGINS.length; i++) {
     const origin = ORIGINS[session.originIndex];
     const url = urlBuilder(origin);
 
@@ -84,59 +92,24 @@ async function fetchSticky(urlBuilder, req, session) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res;
 
-    } catch (err) {
-      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
+    } catch (e) {
+      console.warn("⚠️ Origin failed:", ORIGINS[session.originIndex]);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 150));
     }
   }
-
   throw new Error("All origins failed");
 }
 
 // =========================
-// HOME PAGE
+// HOME
 // =========================
 app.get("/", (_, res) => {
-  res.send(`
-    <html>
-      <head>
-        <title>Star Of Venus</title>
-        <style>
-          body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #000;
-            font-family: 'Arial', sans-serif;
-          }
-          h1 {
-            font-size: 4rem;
-            text-transform: uppercase;
-            background: linear-gradient(270deg, red, orange, yellow, green, blue, indigo, violet);
-            background-size: 1400% 1400%;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            animation: rainbow 10s ease infinite;
-          }
-          @keyframes rainbow {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
-          }
-        </style>
-      </head>
-      <body>
-        <h1>Star Of Venus</h1>
-      </body>
-    </html>
-  `);
+  res.send("DASH/HLS Proxy Running");
 });
 
 // =========================
-// DASH/HLS PROXY
+// DASH / HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -165,7 +138,7 @@ app.get("/:channelId/*", async (req, res) => {
     }, req, session);
 
     // =========================
-    // MPD
+    // MPD HANDLING
     // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
@@ -187,7 +160,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS
+    // SEGMENTS (PREFETCH + HOT SWAP)
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -196,49 +169,82 @@ app.get("/:channelId/*", async (req, res) => {
       "Connection": "keep-alive"
     });
 
-    const SEGMENT_DURATION = 6000; // ms (filedura=6)
-    const PREEMPTIVE_ROTATE = 2000; // rotate 2s before segment ends
-    const STALL_LIMIT = 3000; // stall detection
+    const SEGMENT_DURATION = 6000;
+    const PREFETCH_AT = 4000;
+    const STALL_LIMIT = 3000;
 
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
+    let activeStream = upstream.body;
+    let prefetchStream = null;
     let lastChunkTime = Date.now();
-    let preemptiveRotated = false;
+    let prefetched = false;
+    let switched = false;
 
-    const stallTimer = setInterval(() => {
+    async function startPrefetch() {
+      if (prefetched) return;
+      prefetched = true;
+
+      const nextSession = { ...session };
+      rotateOrigin(nextSession);
+
+      try {
+        const prefetchRes = await fetchSticky(origin => {
+          const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
+          return path.includes("?")
+            ? `${base}${path}&${authParams}`
+            : `${base}${path}?${authParams}`;
+        }, req, nextSession);
+
+        console.log("🔥 Prefetch ready:", ORIGINS[nextSession.originIndex]);
+        prefetchStream = prefetchRes.body;
+
+      } catch {
+        console.warn("⚠️ Prefetch failed");
+      }
+    }
+
+    const watchdog = setInterval(() => {
       const now = Date.now();
 
-      // ⚡ Preemptive rotation
-      if (!preemptiveRotated && now - lastChunkTime >= SEGMENT_DURATION - PREEMPTIVE_ROTATE) {
-        console.log("⚡ Preemptive origin rotation before segment end...");
-        rotateOrigin(session);
-        preemptiveRotated = true;
+      if (!prefetched && now - lastChunkTime >= PREFETCH_AT) {
+        startPrefetch();
       }
 
-      // Stall detection
-      if (now - lastChunkTime > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin...");
-        rotateOrigin(session);
-        upstream.body.destroy();
+      if (!switched && prefetchStream && now - lastChunkTime > STALL_LIMIT) {
+        console.warn("⚡ Stall → instant swap");
+        switched = true;
+        activeStream.destroy();
+        activeStream = prefetchStream;
+        pipeActive();
       }
     }, 200);
 
-    upstream.body.on("data", chunk => {
-      lastChunkTime = Date.now();
-      proxyStream.write(chunk);
-    });
+    function pipeActive() {
+      activeStream.on("data", chunk => {
+        lastChunkTime = Date.now();
+        proxyStream.write(chunk);
+      });
 
-    upstream.body.on("end", () => {
-      clearInterval(stallTimer);
-      proxyStream.end();
-    });
+      activeStream.on("end", () => {
+        clearInterval(watchdog);
+        proxyStream.end();
+      });
 
-    upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error, rotating origin...", err.message);
-      rotateOrigin(session);
-      proxyStream.end();
-    });
+      activeStream.on("error", err => {
+        console.warn("⚠️ Stream error:", err.message);
+        if (prefetchStream && !switched) {
+          switched = true;
+          activeStream = prefetchStream;
+          pipeActive();
+        } else {
+          proxyStream.end();
+        }
+      });
+    }
+
+    pipeActive();
 
   } catch (err) {
     console.error("❌ Proxy error:", err.message);
@@ -247,8 +253,8 @@ app.get("/:channelId/*", async (req, res) => {
 });
 
 // =========================
-// START SERVER
+// START
 // =========================
 app.listen(PORT, () => {
-  console.log(`✅ DASH/HLS proxy running on port ${PORT}`);
+  console.log(`✅ Proxy running on port ${PORT}`);
 });
