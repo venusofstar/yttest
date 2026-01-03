@@ -1,6 +1,7 @@
+"use strict";
+
 const express = require("express");
 const cors = require("cors");
-const fetch = require("node-fetch");
 const http = require("http");
 const https = require("https");
 const { PassThrough } = require("stream");
@@ -8,58 +9,82 @@ const { PassThrough } = require("stream");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// =========================
+// MIDDLEWARE
+// =========================
 app.use(cors());
 app.use(express.raw({ type: "*/*" }));
 
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 200,
+  keepAliveMsecs: 30000
+});
 
 // =========================
 // ORIGINS
 // =========================
 const ORIGINS = [
-  "http://143.44.136.67:6060",
-  "http://136.239.158.18:6610"
+  "http://136.239.158.30:6610",
+  "http://136.158.97.2:6610",
+  "http://136.239.173.10:6610",
+  "http://136.239.159.20:6610"
 ];
 
 // =========================
-// PER-CHANNEL SESSION
+// PER-CHANNEL SESSIONS
 // =========================
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid
+    ztecid: `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`,
+    lastUsed: Date.now()
   };
 }
 
 function getSession(channelId) {
-  if (!channelSessions.has(channelId)) {
-    channelSessions.set(channelId, createSession(channelId));
+  let session = channelSessions.get(channelId);
+  if (!session) {
+    session = createSession(channelId);
+    channelSessions.set(channelId, session);
   }
-  return channelSessions.get(channelId);
+  session.lastUsed = Date.now();
+  return session;
 }
 
 function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// cleanup every 10 min
-setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
+// cleanup idle sessions (15 min)
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of channelSessions.entries()) {
+    if (now - v.lastUsed > 15 * 60 * 1000) {
+      channelSessions.delete(k);
+    }
+  }
+}, 5 * 60 * 1000);
 
 // =========================
 // FETCH WITH STICKY ORIGIN
 // =========================
 async function fetchSticky(urlBuilder, req, session) {
-  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
+  for (let i = 0; i < ORIGINS.length; i++) {
     const origin = ORIGINS[session.originIndex];
     const url = urlBuilder(origin);
 
@@ -72,7 +97,8 @@ async function fetchSticky(urlBuilder, req, session) {
         headers: {
           "User-Agent": req.headers["user-agent"] || "OTT",
           "Accept": "*/*",
-          "Connection": "keep-alive"
+          "Connection": "keep-alive",
+          ...(req.headers.range ? { Range: req.headers.range } : {})
         },
         signal: controller.signal
       });
@@ -83,7 +109,7 @@ async function fetchSticky(urlBuilder, req, session) {
       return res;
 
     } catch (err) {
-      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
+      console.warn("⚠️ Origin failed:", origin, err.message);
       rotateOrigin(session);
       await new Promise(r => setTimeout(r, 200));
     }
@@ -93,7 +119,7 @@ async function fetchSticky(urlBuilder, req, session) {
 }
 
 // =========================
-// HOME PAGE
+// HOME
 // =========================
 app.get("/", (_, res) => {
   res.send(`
@@ -102,39 +128,36 @@ app.get("/", (_, res) => {
         <title>Star Of Venus</title>
         <style>
           body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #000;
-            font-family: 'Arial', sans-serif;
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            height:100vh;
+            margin:0;
+            background:#000;
+            font-family:Arial;
           }
           h1 {
-            font-size: 4rem;
-            text-transform: uppercase;
-            background: linear-gradient(270deg, red, orange, yellow, green, blue, indigo, violet);
-            background-size: 1400% 1400%;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            animation: rainbow 10s ease infinite;
+            font-size:4rem;
+            background:linear-gradient(270deg,red,orange,yellow,green,blue,indigo,violet);
+            background-size:1400% 1400%;
+            -webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;
+            animation:rainbow 10s ease infinite;
           }
           @keyframes rainbow {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
+            0%{background-position:0% 50%}
+            50%{background-position:100% 50%}
+            100%{background-position:0% 50%}
           }
         </style>
       </head>
-      <body>
-        <h1>Star Of Venus</h1>
-      </body>
+      <body><h1>Star Of Venus</h1></body>
     </html>
   `);
 });
 
 // =========================
-// DASH/HLS PROXY
+// DASH / HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -162,18 +185,13 @@ app.get("/:channelId/*", async (req, res) => {
         : `${base}${path}?${authParams}`;
     }, req, session);
 
-    // =========================
-    // MPD
-    // =========================
+    // ===== MPD =====
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
       mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
-      mpd = mpd.replace(
-        /<MPD([^>]*)>/,
-        `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
-      );
+      mpd = mpd.replace(/<MPD([^>]*)>/, `<MPD$1><BaseURL>${proxyBase}</BaseURL>`);
 
       res.set({
         "Content-Type": "application/dash+xml",
@@ -184,39 +202,33 @@ app.get("/:channelId/*", async (req, res) => {
       return res.send(mpd);
     }
 
-    // =========================
-    // SEGMENTS
-    // =========================
+    // ===== SEGMENTS =====
     res.set({
-      "Content-Type": "video/mp4",
+      "Content-Type": upstream.headers.get("content-type") || "video/mp4",
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
       "Connection": "keep-alive"
     });
 
-    const SEGMENT_DURATION = 6000; // ms (filedura=6)
-    const PREEMPTIVE_ROTATE = 2000; // rotate 2s before segment ends
-    const STALL_LIMIT = 3000; // stall detection
-
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    let lastChunkTime = Date.now();
-    let preemptiveRotated = false;
+    const SEGMENT_DURATION = 6000;
+    const PREEMPTIVE_ROTATE = 2000;
+    const STALL_LIMIT = 3000;
 
-    const stallTimer = setInterval(() => {
+    let lastChunkTime = Date.now();
+    let rotated = false;
+
+    const monitor = setInterval(() => {
       const now = Date.now();
 
-      // ⚡ Preemptive rotation
-      if (!preemptiveRotated && now - lastChunkTime >= SEGMENT_DURATION - PREEMPTIVE_ROTATE) {
-        console.log("⚡ Preemptive origin rotation before segment end...");
+      if (!rotated && now - lastChunkTime > SEGMENT_DURATION - PREEMPTIVE_ROTATE) {
         rotateOrigin(session);
-        preemptiveRotated = true;
+        rotated = true;
       }
 
-      // Stall detection
       if (now - lastChunkTime > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin...");
         rotateOrigin(session);
         upstream.body.destroy();
       }
@@ -228,12 +240,12 @@ app.get("/:channelId/*", async (req, res) => {
     });
 
     upstream.body.on("end", () => {
-      clearInterval(stallTimer);
+      clearInterval(monitor);
       proxyStream.end();
     });
 
-    upstream.body.on("error", err => {
-      console.warn("⚠️ Stream error, rotating origin...", err.message);
+    upstream.body.on("error", () => {
+      clearInterval(monitor);
       rotateOrigin(session);
       proxyStream.end();
     });
