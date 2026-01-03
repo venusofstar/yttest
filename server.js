@@ -14,34 +14,32 @@ app.use(express.raw({ type: "*/*" }));
 // =========================
 // KEEP-ALIVE AGENTS
 // =========================
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 300, keepAliveMsecs: 30000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 300, keepAliveMsecs: 30000 });
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAliveMsecs: 30000 });
 
 // =========================
 // ORIGINS
 // =========================
 const ORIGINS = [
-  "http://136.239.158.30:6610",
-  "http://136.158.97.2:6610",
-  "http://136.239.173.10:6610",
-  "http://136.239.159.20:6610"
+  "http://143.44.136.67:6060",
+  "http://136.239.158.18:6610"
 ];
 
-// Origin health score (higher = more reliable)
-const originHealth = ORIGINS.reduce((acc, o) => { acc[o] = 100; return acc; }, {});
-
 // =========================
-// CHANNEL SESSIONS
+// PER-CHANNEL SESSION
 // =========================
 const channelSessions = new Map();
 
 function createSession(channelId) {
+  // Auto-generate ztecid per channelId
+  const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
+
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid: `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`
+    ztecid // store auto-generated ztecid
   };
 }
 
@@ -56,18 +54,15 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// Cleanup
+// cleanup every 10 min
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
 
 // =========================
-// FETCH WITH HEALTH SCORING
+// FETCH WITH STICKY ORIGIN
 // =========================
 async function fetchSticky(urlBuilder, req, session) {
-  // Sort origins by health descending
-  const sortedOrigins = [...ORIGINS].sort((a, b) => originHealth[b] - originHealth[a]);
-
-  for (let i = 0; i < sortedOrigins.length; i++) {
-    const origin = sortedOrigins[session.originIndex % sortedOrigins.length];
+  for (let attempt = 0; attempt < ORIGINS.length; attempt++) {
+    const origin = ORIGINS[session.originIndex];
     const url = urlBuilder(origin);
 
     try {
@@ -87,24 +82,61 @@ async function fetchSticky(urlBuilder, req, session) {
       clearTimeout(timeout);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      // Successful fetch → increase health
-      originHealth[origin] = Math.min(originHealth[origin] + 5, 100);
       return res;
 
     } catch (err) {
-      console.warn("⚠️ Origin failed:", origin, err.message);
-      // Reduce health
-      originHealth[origin] = Math.max(originHealth[origin] - 20, 0);
+      console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 200)); // small delay before retry
     }
   }
+
   throw new Error("All origins failed");
 }
 
 // =========================
-// DASH / HLS PROXY
+// HOME PAGE
+// =========================
+app.get("/", (_, res) => {
+  res.send(`
+    <html>
+      <head>
+        <title>Star Of Venus</title>
+        <style>
+          body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #000;
+            font-family: 'Arial', sans-serif;
+          }
+          h1 {
+            font-size: 4rem;
+            text-transform: uppercase;
+            background: linear-gradient(270deg, red, orange, yellow, green, blue, indigo, violet);
+            background-size: 1400% 1400%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: rainbow 10s ease infinite;
+          }
+          @keyframes rainbow {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+          }
+        </style>
+      </head>
+      <body>
+        <h1>Star Of Venus</h1>
+      </body>
+    </html>
+  `);
+});
+
+// =========================
+// DASH/HLS PROXY
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
@@ -122,7 +154,7 @@ app.get("/:channelId/*", async (req, res) => {
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}`;
+    `&ztecid=${session.ztecid}`; // auto-generated per channel
 
   try {
     const upstream = await fetchSticky(origin => {
@@ -133,7 +165,7 @@ app.get("/:channelId/*", async (req, res) => {
     }, req, session);
 
     // =========================
-    // MPD HANDLING
+    // MPD
     // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
@@ -155,7 +187,7 @@ app.get("/:channelId/*", async (req, res) => {
     }
 
     // =========================
-    // SEGMENTS (NEXT SEGMENT PREFETCH + MULTI ORIGIN)
+    // SEGMENTS
     // =========================
     res.set({
       "Content-Type": "video/mp4",
@@ -164,105 +196,36 @@ app.get("/:channelId/*", async (req, res) => {
       "Connection": "keep-alive"
     });
 
-    const SEGMENT_DURATION = 6000; // default, adaptive can update
-    const STALL_LIMIT = 3000;
-
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    let activeSegmentNumber = session.startNumber;
-    let activeStream = upstream.body;
+    let lastChunk = Date.now();
+    const STALL_LIMIT = 3000;
 
-    // PREFETCH POOL
-    let prefetchStreams = []; // max 2 hot origins
-    let lastChunkTime = Date.now();
-
-    const switched = { value: false };
-
-    // ---------- PIPE ACTIVE STREAM ----------
-    function pipeStream(stream) {
-      stream.on("data", chunk => {
-        lastChunkTime = Date.now();
-        proxyStream.write(chunk);
-      });
-
-      stream.on("end", async () => {
-        if (!switched.value && prefetchStreams.length) {
-          // Hot swap to next prefetched
-          switched.value = true;
-          activeStream = prefetchStreams.shift();
-          activeSegmentNumber++;
-          pipeStream(activeStream);
-          prefetchNextSegments(); // keep multi-prefetch
-        } else {
-          proxyStream.end();
-        }
-      });
-
-      stream.on("error", err => {
-        console.warn("⚠️ Stream error:", err.message);
-        if (!switched.value && prefetchStreams.length) {
-          switched.value = true;
-          activeStream = prefetchStreams.shift();
-          activeSegmentNumber++;
-          pipeStream(activeStream);
-          prefetchNextSegments();
-        } else {
-          proxyStream.end();
-        }
-      });
-    }
-
-    pipeStream(activeStream);
-
-    // ---------- PREFETCH NEXT SEGMENTS ----------
-    async function prefetchNextSegments() {
-      while (prefetchStreams.length < 2) {
-        const nextSegment = activeSegmentNumber + prefetchStreams.length + 1;
-
-        const nextSession = { ...session };
-        rotateOrigin(nextSession);
-
-        try {
-          const prefetchRes = await fetchSticky(origin => {
-            const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
-            const nextPath = path.replace(/startNumber=\d+/, `startNumber=${nextSegment}`);
-            return nextPath.includes("?") ? `${base}${nextPath}&${authParams}` : `${base}${nextPath}?${authParams}`;
-          }, req, nextSession);
-
-          prefetchStreams.push(prefetchRes.body);
-          console.log(`🔥 Prefetched segment ${nextSegment} from ${ORIGINS[nextSession.originIndex]}`);
-
-        } catch (e) {
-          console.warn("⚠️ Prefetch failed", e.message);
-          break;
-        }
+    // Stall detection
+    const stallTimer = setInterval(() => {
+      if (Date.now() - lastChunk > STALL_LIMIT) {
+        console.warn("⚠️ Segment stall detected, rotating origin...");
+        rotateOrigin(session);
+        upstream.body.destroy();
       }
-    }
+    }, 500);
 
-    prefetchNextSegments();
+    upstream.body.on("data", chunk => {
+      lastChunk = Date.now();
+      proxyStream.write(chunk);
+    });
 
-    // ---------- WATCHDOG (ADAPTIVE PREFETCH BASED ON LAST CHUNK) ----------
-    const watchdog = setInterval(() => {
-      const now = Date.now();
-      const elapsed = now - lastChunkTime;
+    upstream.body.on("end", () => {
+      clearInterval(stallTimer);
+      proxyStream.end();
+    });
 
-      // Adaptive prefetch threshold
-      const adaptivePrefetchAt = Math.max(1000, SEGMENT_DURATION - elapsed - 1000);
-      if (!switched.value && elapsed >= adaptivePrefetchAt) {
-        prefetchNextSegments();
-      }
-
-      if (elapsed > STALL_LIMIT && !switched.value && prefetchStreams.length) {
-        console.warn("⚡ Stall → instant swap");
-        switched.value = true;
-        activeStream.destroy();
-        activeStream = prefetchStreams.shift();
-        activeSegmentNumber++;
-        pipeStream(activeStream);
-        prefetchNextSegments();
-      }
-    }, 200);
+    upstream.body.on("error", err => {
+      console.warn("⚠️ Stream error, rotating origin...", err.message);
+      rotateOrigin(session);
+      proxyStream.end();
+    });
 
   } catch (err) {
     console.error("❌ Proxy error:", err.message);
