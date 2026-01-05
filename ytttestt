@@ -4,6 +4,7 @@
 #KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
 #KODIPROP:inputstream.adaptive.license_key=https://k-gmatv.honortv-stream.workers.dev/
 #EXTINF:-1 tvg-id="1093" tvg-logo="https://ottepg8.comclark.com:8443/iptvepg/images/markurl/mark_1723126306082.png" group-title="conv",GMA 7 test
+https://yttest-moj2.onrender.com/1093/converge/manifest.mpd
 https://starofvenus.qzz.io/1093/manifest.mpd
 
 #KODIPROP:inputstream.adaptive.manifest_type=mpd
