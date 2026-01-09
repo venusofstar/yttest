@@ -1,0 +1,17 @@
+Sniffed ito. ctto
+HOW TO EXTRACT DRM KEYS AND MANIFEST (basically a stream grabber)​
+Requirements:Access to the livestream over browserPC
+Get WidevineProxy2
+https://www.mediafire.com/file/y4l8lm58osj5dy4/WidevineProxy2_v0.8.2.zip/file
+Download the latest release from the link.
+Install it to Chrome:
+Go to the extensions tab;
+Enable developer
+Extract the zipped extension to a folder and install it.
+Configure WidevineProxy2
+Open the extension;
+Enable it
+Under 'Widevine Device' click 'Choose File' and insert the file i attached: https://www.mediafire.com/file/80uz...plus_v4.1.0-android_7552870c_4445_l3.wvd/file
+Open the Live TV Site
+When the live stream runs, go to the extension, click the '+' next to the URL you viewed the live stream from.Get the Keys and manifest. You should then have the neccessary keys to restream/play the stream.
+Enjoy! :Agakakskagesh: :Agakakskagesh: para makuha nyo ang bpk cignal playlinks
