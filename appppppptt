@@ -1,5 +1,83 @@
-implementation("androidx.media3:media3-exoplayer:1.2.1")
-implementation("androidx.media3:media3-ui:1.2.1")
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.app.honortvph">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature android:name="android.software.leanback" android:required="true" />
+
+    <application
+        android:label="Honor TV PH"
+        android:banner="@mipmap/ic_launcher"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.HonorTVPH">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>
+
+
+
+
+package com.app.honortvph.model
+
+data class Channel(
+    val name: String,
+    val logo: String,
+    val url: String,
+    val type: String // mp4 | m3u8 | mpd | youtube
+)
+
+
+
+
+
+
+[
+  {
+    "name": "Big Buck Bunny",
+    "logo": "https://peach.blender.org/wp-content/uploads/title_anouncement.jpg",
+    "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+    "type": "mp4"
+  },
+  {
+    "name": "HLS Test",
+    "logo": "https://upload.wikimedia.org/wikipedia/commons/4/4f/NBA_League_Pass_Logo_%282017%29.png",
+    "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+    "type": "m3u8"
+  },
+  {
+    "name": "DASH Test",
+    "logo": "https://upload.wikimedia.org/wikipedia/commons/4/4f/NBA_League_Pass_Logo_%282017%29.png",
+    "url": "https://dash.akamaized.net/envivio/EnvivioDash3/manifest.mpd",
+    "type": "mpd"
+  }
+]
+
+
+package com.app.honortvph.utils
+
+fun detectType(url: String): String {
+    return when {
+        url.endsWith(".mpd") -> "mpd"
+        url.endsWith(".m3u8") -> "m3u8"
+        url.endsWith(".mp4") -> "mp4"
+        else -> "unknown"
+    }
+}
+
+
+
+
+
 
 
 package com.app.honortvph
@@ -7,31 +85,65 @@ package com.app.honortvph
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalContext
+import com.app.honortvph.model.Channel
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val channels = listOf(
+            Channel("Big Buck Bunny", "", "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", "mp4"),
+            Channel("HLS Test", "", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", "m3u8"),
+            Channel("DASH Test", "", "https://dash.akamaized.net/envivio/EnvivioDash3/manifest.mpd", "mpd")
+        )
+
         setContent {
-            VideoPlayer(
-                url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-            )
+            IPTVHome(channels)
         }
     }
 }
 
 @Composable
-fun VideoPlayer(url: String) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+fun IPTVHome(channels: List<Channel>) {
+    var selected by remember { mutableStateOf<Channel?>(null) }
 
+    if (selected == null) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(20.dp)
+        ) {
+            items(channels) { channel ->
+                Text(
+                    text = channel.name,
+                    style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp)
+                        .clickable { selected = channel }
+                )
+            }
+        }
+    } else {
+        PlayerScreen(selected!!.url)
+    }
+}
+
+@Composable
+fun PlayerScreen(url: String) {
+    val context = LocalContext.current
     val player = remember {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(url))
@@ -50,12 +162,6 @@ fun VideoPlayer(url: String) {
         }
     )
 }
-
-
-
-
-<uses-permission android:name="android.permission.INTERNET"/>
-
 
 
 
