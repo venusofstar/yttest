@@ -1,0 +1,242 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.app.honortvph"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.app.honortvph"
+        minSdk = 21
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.4"
+    }
+}
+
+dependencies {
+
+    // Compose
+    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.activity:activity-compose:1.8.2")
+
+    // ExoPlayer (Media3)
+    implementation("androidx.media3:media3-exoplayer:1.2.1")
+    implementation("androidx.media3:media3-ui:1.2.1")
+
+    // Network (M3U download)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+}
+
+
+
+
+
+
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.app.honortvph">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="true" />
+
+    <application
+        android:label="Honor TV PH"
+        android:icon="@mipmap/ic_launcher"
+        android:banner="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.HonorTVPH">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>
+
+
+
+
+
+package com.app.honortvph.model
+
+data class Channel(
+    val name: String,
+    val logo: String,
+    val url: String
+)
+
+
+
+
+
+
+
+
+
+package com.app.honortvph.utils
+
+import com.app.honortvph.model.Channel
+
+fun parseM3U(content: String): List<Channel> {
+    val list = mutableListOf<Channel>()
+
+    var name = ""
+    var logo = ""
+
+    content.lines().forEach { line ->
+        when {
+            line.startsWith("#EXTINF") -> {
+                name = Regex(",(.+)").find(line)?.groupValues?.get(1) ?: "Unknown"
+                logo = Regex("""tvg-logo="([^"]+)"""")
+                    .find(line)?.groupValues?.get(1) ?: ""
+            }
+            line.startsWith("http") -> {
+                list.add(Channel(name, logo, line.trim()))
+            }
+        }
+    }
+    return list
+}
+
+
+
+
+
+package com.app.honortvph.utils
+
+import okhttp3.OkHttpClient
+import okhttp3.Request
+
+fun loadM3U(url: String): String {
+    val client = OkHttpClient()
+    val request = Request.Builder().url(url).build()
+    client.newCall(request).execute().use {
+        return it.body?.string() ?: ""
+    }
+}
+
+
+
+
+
+
+
+package com.app.honortvph
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import com.app.honortvph.model.Channel
+import com.app.honortvph.utils.loadM3U
+import com.app.honortvph.utils.parseM3U
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { IPTVApp() }
+    }
+}
+
+@Composable
+fun IPTVApp() {
+    var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
+    var selected by remember { mutableStateOf<Channel?>(null) }
+
+    LaunchedEffect(Unit) {
+        val m3uUrl = "https://YOUR_M3U_URL_HERE.m3u"
+        val content = withContext(Dispatchers.IO) {
+            loadM3U(m3uUrl)
+        }
+        channels = parseM3U(content)
+    }
+
+    if (selected == null) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp)
+        ) {
+            items(channels) { channel ->
+                Text(
+                    text = channel.name,
+                    style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp)
+                        .clickable { selected = channel }
+                )
+            }
+        }
+    } else {
+        PlayerScreen(selected!!.url)
+    }
+}
+
+@Composable
+fun PlayerScreen(url: String) {
+    val context = LocalContext.current
+
+    val player = remember {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(url))
+            prepare()
+            playWhenReady = true
+        }
+    }
+
+    AndroidView(
+        modifier = Modifier.fillMaxSize(),
+        factory = {
+            PlayerView(context).apply {
+                this.player = player
+                useController = true
+            }
+        }
+    )
+}
+
+
+
+
+
+
+
+
+
+
