@@ -1,6 +1,26 @@
 #EXTM3U
 #EXTM3U
 #EXTM3U
+
+
+#EXTM3U
+
+#EXTINF:-1 tvg-name="Main Broadcast" group-title="Peacock",Main Broadcast
+#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0
+#KODIPROP:inputstream.adaptive.manifest_type=mpd
+#KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
+#KODIPROP:inputstream.adaptive.license_key=00229315f9130f6de7d12d7177fa5f01:dff63ce1c3234abebfa4fa84d46d73b6
+https://g003-sle-us-cmaf-prd-ak.cdn.peacocktv.com/Content/CMAF_CTR-4s-v2/Live/channel(2507527-208940-247d444bfec)/master.mpd
+
+
+#EXTINF:-1 tvg-name="Performance View" group-title="Peacock",Performance View
+#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0
+#KODIPROP:inputstream.adaptive.manifest_type=mpd
+#KODIPROP:inputstream.adaptive.license_type=org.w3.clearkey
+#KODIPROP:inputstream.adaptive.license_key=0022f9aa49d1a546379578131752a966:51932649ac5d426897aca18ba0275e75
+https://g003-sle-us-cmaf-prd-ak.cdn.peacocktv.com/Content/CMAF_CTR-4s-v2/Live/channel(2510900-212313-2489d50b259)/master.mpd
+
+
 #EXTINF:-1 tvg-name="Gandarra PPV" group-title="DRM",Gandarra PPV
 #KODIPROP:inputstream=inputstream.adaptive
 #KODIPROP:inputstream.adaptive.manifest_type=mpd
