@@ -1,3 +1,5 @@
+https://github.com/Mikoshi-nyudo/iptvnator-electron/releases/download/v0.16.9-wider/IPTVnator.Setup.0.16.9.exe
+
 implementation "androidx.media3:media3-exoplayer:1.2.1"
 implementation "androidx.media3:media3-ui:1.2.1"
 implementation "androidx.media3:media3-common:1.2.1"
