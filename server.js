@@ -31,7 +31,7 @@ const ORIGINS = [
 const channelAuth = {
   "1086": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMAogpxrMDVv1bZ%2FeMkgHZmwQsyK4TH4mOENKJ45mwOyS0g%3D%3D",
   "1093": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMAoLvT86fM74ocVChyFS93HUsyK4TH4mOENKJ45mwOyS0g%3D%3D"
-  // Add more channels here
+  // Add more channelId: AutInfo pairs here
 };
 
 // =========================
@@ -61,21 +61,8 @@ function rotateOrigin(session) {
   session.originIndex = (session.originIndex + 1) % ORIGINS.length;
 }
 
-// Clear sessions every 10 min
+// cleanup every 10 min
 setInterval(() => channelSessions.clear(), 10 * 60 * 1000);
-
-// =========================
-// CORS Preflight
-// =========================
-app.options("*", (req, res) => {
-  res.set({
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Expose-Headers": "*",
-  });
-  res.sendStatus(200);
-});
 
 // =========================
 // FETCH WITH STICKY ORIGIN
@@ -89,24 +76,20 @@ async function fetchSticky(urlBuilder, req, session) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12000);
 
-      const headers = {
-        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
-        "Accept": "*/*",
-        "Connection": "keep-alive",
-        "Origin": req.get("origin") || "*",
-        "Referer": req.get("referer") || ""
-      };
-
-      const resUpstream = await fetch(url, {
+      const res = await fetch(url, {
         agent: url.startsWith("https") ? httpsAgent : httpAgent,
-        headers,
+        headers: {
+          "User-Agent": req.headers["user-agent"] || "OTT",
+          "Accept": "*/*",
+          "Connection": "keep-alive"
+        },
         signal: controller.signal
       });
 
       clearTimeout(timeout);
 
-      if (!resUpstream.ok) throw new Error(`HTTP ${resUpstream.status}`);
-      return resUpstream;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res;
 
     } catch (err) {
       console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
@@ -122,7 +105,41 @@ async function fetchSticky(urlBuilder, req, session) {
 // HOME PAGE
 // =========================
 app.get("/", (_, res) => {
-  res.send(`<h1 style="text-align:center;color:white;background:black;padding:50px;">test</h1>`);
+  res.send(`
+    <html>
+      <head>
+        <title></title>
+        <style>
+          body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #000;
+            font-family: 'Arial', sans-serif;
+          }
+          h1 {
+            font-size: 4rem;
+            text-transform: uppercase;
+            background: linear-gradient(270deg, red, orange, yellow, green, blue, indigo, violet);
+            background-size: 1400% 1400%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: rainbow 10s ease infinite;
+          }
+          @keyframes rainbow {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+          }
+        </style>
+      </head>
+      <body>
+        <h1></h1>
+      </body>
+    </html>
+  `);
 });
 
 // =========================
@@ -130,57 +147,59 @@ app.get("/", (_, res) => {
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
-  const path = req.params[0]; // manifest.mpd, segment.m4s, or .m3u8
+  const path = req.params[0]; // e.g., manifest.mpd or segment.m4s
   const session = getSession(channelId);
 
-  const authParams = new URLSearchParams({
-    JITPDRMType: "Widevine",
-    virtualDomain: "001.live_hls.zte.com",
-    m4s_min: "1",
-    NeedJITP: "1",
-    isjitp: "0",
-    startNumber: session.startNumber,
-    filedura: "6",
-    ispcode: "55",
-    IASHttpSessionId: session.IAS,
-    usersessionid: session.userSession,
-    ztecid: session.ztecid,
-    ...(channelAuth[channelId] ? { AutInfo: channelAuth[channelId] } : {})
-  }).toString();
+  const authParams =
+    `JITPDRMType=Widevine` +
+    `&virtualDomain=001.live_hls.zte.com` +
+    `&m4s_min=1` +
+    `&NeedJITP=1` +
+    `&isjitp=0` +
+    `&startNumber=${session.startNumber}` +
+    `&filedura=6` +
+    `&ispcode=55` +
+    `&IASHttpSessionId=${session.IAS}` +
+    `&usersessionid=${session.userSession}` +
+    `&ztecid=${session.ztecid}` +
+    (channelAuth[channelId] ? `&AutInfo=${channelAuth[channelId]}` : "");
 
   try {
     const upstream = await fetchSticky(origin => {
       const base = `${origin}/001/2/ch0000009099000000${channelId}/`;
-      return path.includes("?") ? `${base}${path}&${authParams}` : `${base}${path}?${authParams}`;
+      return path.includes("?")
+        ? `${base}${path}&${authParams}`
+        : `${base}${path}?${authParams}`;
     }, req, session);
 
-    const contentType = path.endsWith(".mpd") ? "application/dash+xml" :
-                        path.endsWith(".m3u8") ? "application/vnd.apple.mpegurl" :
-                        "video/mp4";
+    // MPD Rewriting
+    if (path.endsWith(".mpd")) {
+      let mpd = await upstream.text();
+      const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
 
+      mpd = mpd.replace(/<BaseURL>.*?<\/BaseURL>/gs, "");
+      mpd = mpd.replace(
+        /<MPD([^>]*)>/,
+        `<MPD$1><BaseURL>${proxyBase}</BaseURL>`
+      );
+
+      res.set({
+        "Content-Type": "application/dash+xml",
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*"
+      });
+
+      return res.send(mpd);
+    }
+
+    // SEGMENTS
     res.set({
-      "Content-Type": contentType,
+      "Content-Type": "video/mp4",
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Connection": "keep-alive"
     });
 
-    // =========================
-    // MANIFEST REWRITE
-    // =========================
-    if (path.endsWith(".mpd") || path.endsWith(".m3u8")) {
-      let manifest = await upstream.text();
-      const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
-      // Rewrite segment URLs to proxy path
-      manifest = manifest.replace(/(https?:\/\/[^\s]+)/g, proxyBase);
-      return res.send(manifest);
-    }
-
-    // =========================
-    // SEGMENTS
-    // =========================
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
