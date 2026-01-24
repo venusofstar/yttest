@@ -26,20 +26,27 @@ const ORIGINS = [
 ];
 
 // =========================
+// CHANNEL AUTINFO
+// =========================
+const channelAuth = {
+  "1086": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMAogpxrMDVv1bZ%2FeMkgHZmwQsyK4TH4mOENKJ45mwOyS0g%3D%3D",
+  "1093": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMAoLvT86fM74ocVChyFS93HUsyK4TH4mOENKJ45mwOyS0g%3D%3D"
+  // Add more channelId: AutInfo pairs here
+};
+
+// =========================
 // PER-CHANNEL SESSION
 // =========================
 const channelSessions = new Map();
 
 function createSession(channelId) {
-  // Auto-generate ztecid per channelId
   const ztecid = `ch0000009099000000${channelId}${Math.floor(Math.random() * 9000 + 1000)}`;
-
   return {
     originIndex: Math.floor(Math.random() * ORIGINS.length),
     startNumber: 46489952 + Math.floor(Math.random() * 100000) * 6,
     IAS: "RR" + Date.now() + Math.random().toString(36).slice(2, 10),
     userSession: Math.floor(Math.random() * 1e15).toString(),
-    ztecid // store auto-generated ztecid
+    ztecid
   };
 }
 
@@ -154,7 +161,8 @@ app.get("/:channelId/converge/*", async (req, res) => {
     `&ispcode=55` +
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
-    `&ztecid=${session.ztecid}`; // auto-generated per channel
+    `&ztecid=${session.ztecid}` +
+    (channelAuth[channelId] ? `&AutInfo=${channelAuth[channelId]}` : "");
 
   try {
     const upstream = await fetchSticky(origin => {
