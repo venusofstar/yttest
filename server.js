@@ -21,14 +21,16 @@ const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAlive
 // ORIGINS
 // =========================
 const ORIGINS = [
-  "http://143.44.136.67:6060",
-  "http://136.239.158.18:6610"
+  "http://136.239.158.30:6610",
+  "http://136.158.97.2:6610",
+  "http://136.239.173.10:6610",
+  "http://136.239.159.20:6610"
 ];
 
 // =========================
-// CHANNEL AUTINFO
+// AUTH INFO PER CHANNEL
 // =========================
-const channelAuth = {
+const AuthInfo = {
   "1065": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMAosKg8aLji3LHWqHUI%2FwQyJsyK4TH4mOENKJ45mwOyS0g%3D%3D",
   "1075": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMAqJxLC59eO5kyq497fsAC7QsyK4TH4mOENKJ45mwOyS0g%3D%3D",
   "1077": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMArHUpvQtyXgWxpVCozt4hcgsyK4TH4mOENKJ45mwOyS0g%3D%3D",
@@ -131,8 +133,6 @@ const channelAuth = {
   "1416": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMApiydQwVS6x%2ByI3x6azD4uC2%2FjHNuou2Jtxin49X3LQKw%3D%3D",
   "1476": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMAoW%2FGpHjyFHp8a%2BLnIfrTUy2%2FjHNuou2Jtxin49X3LQKw%3D%3D",
   "1495": "v87HD9rEhwHiAdYyrP20TsXah2%2FZLFNNIdWrVrXDMAoKAhSI%2FKriXVjdza0RuOjP2%2FjHNuou2Jtxin49X3LQKw%3D%3D"
-
-
 };
 
 // =========================
@@ -248,8 +248,13 @@ app.get("/", (_, res) => {
 // =========================
 app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
-  const path = req.params[0]; // e.g., manifest.mpd or segment.m4s
+  const path = req.params[0];
+
+  // Block if channel ID is not in AuthInfo
+  if (!AuthInfo[channelId]) return res.status(403).send("Channel not authorized");
+
   const session = getSession(channelId);
+  const authToken = AuthInfo[channelId];
 
   const authParams =
     `JITPDRMType=Widevine` +
@@ -263,7 +268,7 @@ app.get("/:channelId/*", async (req, res) => {
     `&IASHttpSessionId=${session.IAS}` +
     `&usersessionid=${session.userSession}` +
     `&ztecid=${session.ztecid}` +
-    (channelAuth[channelId] ? `&AutInfo=${channelAuth[channelId]}` : "");
+    `&authinfo=${encodeURIComponent(authToken)}`;
 
   try {
     const upstream = await fetchSticky(origin => {
@@ -273,7 +278,9 @@ app.get("/:channelId/*", async (req, res) => {
         : `${base}${path}?${authParams}`;
     }, req, session);
 
-    // MPD Rewriting
+    // =========================
+    // MPD
+    // =========================
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
@@ -293,7 +300,9 @@ app.get("/:channelId/*", async (req, res) => {
       return res.send(mpd);
     }
 
+    // =========================
     // SEGMENTS
+    // =========================
     res.set({
       "Content-Type": "video/mp4",
       "Cache-Control": "no-store",
@@ -301,22 +310,36 @@ app.get("/:channelId/*", async (req, res) => {
       "Connection": "keep-alive"
     });
 
+    const SEGMENT_DURATION = 6000; // ms (filedura=6)
+    const PREEMPTIVE_ROTATE = 2000; // rotate 2s before segment ends
+    const STALL_LIMIT = 3000; // stall detection
+
     const proxyStream = new PassThrough();
     proxyStream.pipe(res);
 
-    let lastChunk = Date.now();
-    const STALL_LIMIT = 3000;
+    let lastChunkTime = Date.now();
+    let preemptiveRotated = false;
 
     const stallTimer = setInterval(() => {
-      if (Date.now() - lastChunk > STALL_LIMIT) {
-        console.warn("⚠️ Segment stall detected, rotating origin...");
+      const now = Date.now();
+
+      // ⚡ Preemptive rotation
+      if (!preemptiveRotated && now - lastChunkTime >= SEGMENT_DURATION - PREEMPTIVE_ROTATE) {
+        console.log("⚡ Preemptive origin rotation before segment end...");
         rotateOrigin(session);
-        upstream.body.destroy();
+        preemptiveRotated = true;
       }
-    }, 500);
+
+      // Stall detection
+      if (now - lastChunkTime > STALL_LIMIT) {
+        console.warn("⚠️ Segment stall detected, rotating origin...");
+        try { upstream.body.destroy(); } catch(e) {}
+        rotateOrigin(session);
+      }
+    }, 200);
 
     upstream.body.on("data", chunk => {
-      lastChunk = Date.now();
+      lastChunkTime = Date.now();
       proxyStream.write(chunk);
     });
 
