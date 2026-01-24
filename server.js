@@ -108,7 +108,7 @@ app.get("/", (_, res) => {
   res.send(`
     <html>
       <head>
-        <title>Star Of Venus</title>
+        <title></title>
         <style>
           body {
             display: flex;
