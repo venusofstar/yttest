@@ -94,7 +94,7 @@ async function fetchSticky(urlBuilder, req, session) {
     } catch (err) {
       console.error("⚠️ Origin failed:", ORIGINS[session.originIndex], err.message);
       rotateOrigin(session);
-      await new Promise(r => setTimeout(r, 200)); // small delay before retry
+      await new Promise(r => setTimeout(r, 200));
     }
   }
 
@@ -136,7 +136,7 @@ app.get("/", (_, res) => {
         </style>
       </head>
       <body>
-        <h1>Star Of Venus</h1>
+        <h1></h1>
       </body>
     </html>
   `);
@@ -145,9 +145,9 @@ app.get("/", (_, res) => {
 // =========================
 // DASH/HLS PROXY
 // =========================
-app.get("/:channelId/converge/*", async (req, res) => {
+app.get("/:channelId/*", async (req, res) => {
   const { channelId } = req.params;
-  const path = req.params[0];
+  const path = req.params[0]; // e.g., manifest.mpd or segment.m4s
   const session = getSession(channelId);
 
   const authParams =
@@ -172,9 +172,7 @@ app.get("/:channelId/converge/*", async (req, res) => {
         : `${base}${path}?${authParams}`;
     }, req, session);
 
-    // =========================
-    // MPD
-    // =========================
+    // MPD Rewriting
     if (path.endsWith(".mpd")) {
       let mpd = await upstream.text();
       const proxyBase = `${req.protocol}://${req.get("host")}/${channelId}/`;
@@ -194,9 +192,7 @@ app.get("/:channelId/converge/*", async (req, res) => {
       return res.send(mpd);
     }
 
-    // =========================
     // SEGMENTS
-    // =========================
     res.set({
       "Content-Type": "video/mp4",
       "Cache-Control": "no-store",
@@ -210,7 +206,6 @@ app.get("/:channelId/converge/*", async (req, res) => {
     let lastChunk = Date.now();
     const STALL_LIMIT = 3000;
 
-    // Stall detection
     const stallTimer = setInterval(() => {
       if (Date.now() - lastChunk > STALL_LIMIT) {
         console.warn("⚠️ Segment stall detected, rotating origin...");
