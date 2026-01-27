@@ -21,8 +21,8 @@ const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 200, keepAlive
 // ORIGINS
 // =========================
 const ORIGINS = [
-  "http://143.44.136.67:6060",
-  "http://136.239.158.18:6610"
+  "http://136.239.158.18:6610",
+  "http://136.239.158.20:6610"
 ];
 
 // =========================
@@ -255,9 +255,8 @@ app.get("/:channelId/*", async (req, res) => {
   const authToken = AuthInfo[channelId];
 
   const authParams =
-    `JITPDRMType=Widevine` +
+    `JITPDRMType=NO` +
     `&virtualDomain=001.live_hls.zte.com` +
-    `&m4s_min=1` +
     `&NeedJITP=1` +
     `&isjitp=0` +
     `&startNumber=${session.startNumber}` +
