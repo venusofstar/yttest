@@ -49,8 +49,8 @@ app.get('/', (req, res) => {
 <body>
   <div class="box">
     <h1>📺 HONOR TV PH</h1>
-    <p>Enjoy Watching Movies</p>
-    <p><small>@2025</small></p>
+    <p>Enjoy Watching</p>
+    <p><small>@2026</small></p>
   </div>
 </body>
 </html>
