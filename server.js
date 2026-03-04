@@ -20,16 +20,41 @@ const httpsAgent = new https.Agent({
 // CHANNEL MAP
 // =========================
 const CHANNELS = {
-  gmapt3: "https://absp-live.akamaized.net/dash/live/2099522/gmapt3/",
-  glife3: "https://absp-live.akamaized.net/dash/live/2099522/glife3/",
-  gnews3: "https://absp-live.akamaized.net/dash/live/2099522/gnews3/"
+  gmapinoytv: "https://absp-live.akamaized.net/dash/live/2099522/gmapt3/",
+  gmalife: "https://absp-live.akamaized.net/dash/live/2099522/glife3/",
+  gmanews: "https://absp-live.akamaized.net/dash/live/2099522/gnews3/"
 };
 
 // =========================
-// HOME
-// =========================
-app.get("/", (_, res) => {
-  res.send("GMA DASH Proxy Running");
+/* ================= HOME ================= */
+app.get('/', (req, res) => {
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <title>HONOR TV PH</title>
+  <style>
+    body{
+      margin:0;height:100vh;display:flex;justify-content:center;align-items:center;
+      background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+      font-family:Arial;color:#fff;text-align:center
+    }
+    .box{
+      background:rgba(0,0,0,.45);padding:30px 40px;border-radius:16px;
+      box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:420px
+    }
+    h1{color:#00e5ff;margin:0}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>📺 HONOR TV PH</h1>
+    <p>Enjoy Watching Movies</p>
+    <p><small>@2025</small></p>
+  </div>
+</body>
+</html>
+`);
 });
 
 // =========================
