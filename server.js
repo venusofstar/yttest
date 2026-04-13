@@ -34,7 +34,7 @@ const CHANNELS = {
     manifest: "manifest.mpd"
   },
   kapamilya: {
-    baseUrl: "https://cdn-ue1-prod.tsv2.amagi.tv/linear/amg01006-abs-cbn-kapcha-dash-abscbnono/ea9b1903-75d6-490a-95fc-0fc3f3165ba3/",
+    baseUrl: "https://cdn-ue1-prod.tsv2.amagi.tv/linear/amg01006-abs-cbn-kapcha-dash-abscbnono/",
     manifest: "index.mpd"
   }
 };
