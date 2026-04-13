@@ -40,56 +40,36 @@ const CHANNELS = {
 };
 
 // =========================
-// HOME PAGE
 // =========================
-app.get("/", (req, res) => {
-  const links = Object.entries(CHANNELS)
-    .map(([id, data]) => {
-      const label = id.replace(/([A-Z])/g, " $1").toUpperCase();
-      return `<li><a href="/${id}/${data.manifest}" target="_blank">${label}</a></li>`;
-    })
-    .join("");
-
+/* ================= HOME ================= */
+app.get('/', (req, res) => {
   res.send(`
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HONOR TV PH</title>
-<style>
-body{
-  margin:0;
-  height:100vh;
-  display:flex;
-  justify-content:center;
-  align-items:center;
-  background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-  font-family:Arial,sans-serif;
-  color:white;
-  text-align:center;
-}
-.box{
-  background:rgba(0,0,0,.45);
-  padding:30px 40px;
-  border-radius:16px;
-  box-shadow:0 10px 30px rgba(0,0,0,.5);
-}
-h1{color:#00e5ff;margin:0 0 15px}
-a{color:#00e5ff;text-decoration:none}
-ul{text-align:left;padding-left:20px}
-</style>
+  <title>HONOR TV PH</title>
+  <style>
+    body{
+      margin:0;height:100vh;display:flex;justify-content:center;align-items:center;
+      background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+      font-family:Arial;color:#fff;text-align:center
+    }
+    .box{
+      background:rgba(0,0,0,.45);padding:30px 40px;border-radius:16px;
+      box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:420px
+    }
+    h1{color:#00e5ff;margin:0}
+  </style>
 </head>
 <body>
-<div class="box">
-  <h1>📺 HONOR TV PH</h1>
-  <p>DASH Proxy Server</p>
-  <ul>${links}</ul>
-  <p><small>© 2026 HONOR TV PH</small></p>
-</div>
+  <div class="box">
+    <h1>📺 HONOR TV PH</h1>
+    <p>Enjoy Watching</p>
+    <p><small>@2026</small></p>
+  </div>
 </body>
 </html>
-  `);
+`);
 });
 
 // =========================
