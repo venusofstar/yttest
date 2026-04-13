@@ -22,7 +22,8 @@ const httpsAgent = new https.Agent({
 const CHANNELS = {
   gmapinoytv: "https://absp-live.akamaized.net/dash/live/2099522/gmapt3/",
   gmalife: "https://absp-live.akamaized.net/dash/live/2099522/glife3/",
-  gmanews: "https://absp-live.akamaized.net/dash/live/2099522/gnews3/"
+  gmanews: "https://absp-live.akamaized.net/dash/live/2099522/gnews3/",
+  kapamilya: "https://cdn-ue1-prod.tsv2.amagi.tv/linear/amg01006-abs-cbn-kapcha-dash-abscbnono/ea9b1903-75d6-490a-95fc-0fc3f3165ba3/"
 };
 
 // =========================
