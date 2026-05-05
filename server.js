@@ -34,8 +34,8 @@ const CHANNELS = {
     manifest: "manifest.mpd"
   },
   kapamilya: {
-    baseUrl: "https://cdn-ue1-prod.tsv2.amagi.tv/linear/amg01006-abs-cbn-kapcha-dash-abscbnono/",
-    manifest: "index.mpd"
+    baseUrl: "https://g003-sle-us-cmaf-prd-ak.cdn.peacocktv.com/co01/pcksle1/Content/CMAF_CTR-4s-v2/Live/channel(2513737-215150-2494669ecae)/",
+    manifest: "master.mpd"
   }
 };
 
