@@ -36,6 +36,10 @@ const CHANNELS = {
   kapamilya: {
     baseUrl: "https://g003-sle-us-cmaf-prd-ak.cdn.peacocktv.com/co01/pcksle1/Content/CMAF_CTR-4s-v2/Live/channel(2513737-215150-2494669ecae)/",
     manifest: "master.mpd"
+  },
+    cinemaoneglobal: {
+    baseUrl: "https://channel.singteltvgo.com/wp/liveorigincluster.poster.iptv.singnet.public/6692/vxfmt=dp/",
+    manifest: "manifest.mpd?device_profile=DASH_OTT_ENC_CENC_AXINOM"
   }
 };
 
