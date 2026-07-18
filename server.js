@@ -42,6 +42,11 @@ const CHANNELS = {
     manifest: "master.mpd"
   },
 
+      tv5: {
+    baseUrl: "https://ucdn.mediaquest.com.ph/bpk-tv/tv5_hd/default1/",
+    manifest: "index.mpd"
+  },
+  
   cinemaoneglobal: {
     baseUrl:
       "https://channel.singteltvgo.com/wp/liveorigincluster.poster.iptv.singnet.public/6692/vxfmt=dp/",
